@@ -71,7 +71,7 @@ class AgentToolRegistry:
             "getTimetable", "getStudentSchedule", "getTeacherSchedule", "getSubjects",
             "getRooms", "checkRoomAvailability", "getMentees", "getDepartmentAnalytics",
             "getUsers", "searchKnowledge", "exportTimetableExcel", "exportTimetablePDF",
-            "generateWorkloadReport", "generateAttendanceReport"
+            "generateWorkloadReport", "generateAttendanceReport", "inspectAttachedFile"
         }
         tool.operation = "read" if tool.backend_action in read_actions else "write"
         self._tools[tool.name] = tool
@@ -237,6 +237,131 @@ class AgentToolRegistry:
                     "success": False,
                     "error": "KNOWLEDGE_SEARCH_FAILED",
                     "message": "The institutional knowledge search could not be completed.",
+                }
+        if tool.backend_action == "inspectAttachedFile":
+            file_id = arguments.get("file_id")
+            fname_arg = arguments.get("filename") or arguments.get("name")
+            conv_id = user_context.get("conversationId") or ""
+            raw_uid = user_context.get("id") or user_context.get("userId") or user_context.get("user_id")
+            doc = None
+            try:
+                import re
+                from bson import ObjectId
+                # 1. Lookup by ID if valid
+                if file_id and mongo_memory.db is not None:
+                    if ObjectId.is_valid(file_id):
+                        doc = mongo_memory.db.file_documents.find_one({"_id": ObjectId(file_id)})
+                    if not doc:
+                        doc = mongo_memory.db.file_documents.find_one({"_id": str(file_id)})
+
+                # 2. Lookup by filename / originalName regex
+                query_name = fname_arg or (file_id if file_id and not ObjectId.is_valid(file_id) else None)
+                if not doc and query_name and mongo_memory.db is not None:
+                    doc = mongo_memory.db.file_documents.find_one(
+                        {"$or": [
+                            {"filename": {"$regex": re.escape(str(query_name)), "$options": "i"}},
+                            {"originalName": {"$regex": re.escape(str(query_name)), "$options": "i"}}
+                        ], "isDeleted": {"$ne": True}},
+                        sort=[("_id", -1)]
+                    )
+
+                # 3. Lookup by conversationId
+                if not doc and conv_id and mongo_memory.db is not None:
+                    doc = mongo_memory.db.file_documents.find_one(
+                        {"conversationId": conv_id, "isDeleted": {"$ne": True}},
+                        sort=[("_id", -1)]
+                    )
+
+                # 4. Lookup latest file by user ID
+                if not doc and raw_uid and mongo_memory.db is not None:
+                    doc = mongo_memory.db.file_documents.find_one(
+                        {"userId": str(raw_uid), "isDeleted": {"$ne": True}},
+                        sort=[("_id", -1)]
+                    )
+
+                # 5. Fallback to most recent file in system
+                if not doc and mongo_memory.db is not None:
+                    doc = mongo_memory.db.file_documents.find_one(
+                        {"isDeleted": {"$ne": True}},
+                        sort=[("_id", -1)]
+                    )
+            except Exception as e:
+                logger.error(f"[ToolRegistry] Error fetching attached file document: {e}")
+
+            if not doc:
+                execution_result = {
+                    "success": False,
+                    "error": "FILE_NOT_FOUND",
+                    "message": "No attached file or document found for this reference. Please attach or specify a file name."
+                }
+            else:
+                extracted = doc.get("extractedContent") or {}
+                ftype = str(doc.get("fileType", "")).lower()
+                mime = str(doc.get("mimeType", "")).lower()
+                storage_url = doc.get("storageUrl") or ""
+
+                # On-demand extraction if summary and text are missing
+                if not extracted.get("summary") and not extracted.get("fullText"):
+                    try:
+                        if ftype in ("jpg", "jpeg", "png", "webp") or "image" in mime:
+                            from file_processing.image_pipeline import image_pipeline
+                            norm = image_pipeline.process(
+                                image_url=storage_url,
+                                filename=doc.get("filename", ""),
+                                document_id=str(doc.get("_id", ""))
+                            )
+                            if norm:
+                                extracted = {
+                                    "summary": norm.summary or (norm.visual_analyses[0].description if norm.visual_analyses else ""),
+                                    "textPreview": (norm.text or "")[:400],
+                                    "fullText": norm.text or "",
+                                    "tables": norm.tables or [],
+                                    "structuredData": norm.structured_data or {},
+                                    "hasVisualContent": True
+                                }
+                                doc["extractedContent"] = extracted
+                                if mongo_memory.db is not None:
+                                    mongo_memory.db.file_documents.update_one(
+                                        {"_id": doc["_id"]},
+                                        {"$set": {"processingStatus": "completed", "extractedContent": extracted}}
+                                    )
+                        elif ftype == "pdf" or "pdf" in mime:
+                            from file_processing.pdf_pipeline import pdf_pipeline
+                            norm = pdf_pipeline.process(
+                                file_url=storage_url,
+                                filename=doc.get("filename", ""),
+                                document_id=str(doc.get("_id", ""))
+                            )
+                            if norm and norm.text:
+                                extracted = {
+                                    "summary": norm.summary or f"PDF document '{doc.get('filename')}'.",
+                                    "textPreview": (norm.text or "")[:400],
+                                    "fullText": norm.text or "",
+                                    "tables": norm.tables or [],
+                                    "structuredData": norm.structured_data or {},
+                                    "hasVisualContent": norm.has_visual_content
+                                }
+                                doc["extractedContent"] = extracted
+                                if mongo_memory.db is not None:
+                                    mongo_memory.db.file_documents.update_one(
+                                        {"_id": doc["_id"]},
+                                        {"$set": {"processingStatus": "completed", "extractedContent": extracted}}
+                                    )
+                    except Exception as extract_err:
+                        logger.warning(f"[ToolRegistry] On-demand extraction warning: {extract_err}")
+
+                execution_result = {
+                    "success": True,
+                    "document_id": str(doc.get("_id", "")),
+                    "filename": doc.get("filename") or doc.get("originalName"),
+                    "file_type": doc.get("fileType"),
+                    "mime_type": doc.get("mimeType"),
+                    "storage_url": doc.get("storageUrl"),
+                    "processing_status": doc.get("processingStatus"),
+                    "summary": extracted.get("summary") or "No text summary available.",
+                    "full_text": extracted.get("fullText") or extracted.get("textPreview") or "",
+                    "tables": extracted.get("tables") or [],
+                    "structured_data": extracted.get("structuredData") or {}
                 }
             duration_ms = int((time.time() - start_time) * 1000)
             try:
@@ -1083,6 +1208,26 @@ class AgentToolRegistry:
             required_permissions=["USER_READ"],
             allowed_roles=["ADMIN"],
             backend_action="getUsers"
+        ))
+
+        # =====================================================================
+        # 9. UNIVERSAL DOCUMENT & ATTACHMENT INTELLIGENCE
+        # =====================================================================
+        self.register(ToolDefinition(
+            name="inspect_attached_file",
+            description="Inspect the extracted content, OCR text, data tables, or visual analysis of an attached image or document.",
+            purpose="Inspect Attached Document or Image",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string", "description": "Optional MongoDB File ID. If omitted, inspects the latest file attached to this conversation."},
+                    "query": {"type": "string", "description": "Optional question or focus area (e.g. 'summary', 'tables', 'description')"}
+                }
+            },
+            output_schema={"type": "object"},
+            required_permissions=[],
+            allowed_roles=["ALL"],
+            backend_action="inspectAttachedFile"
         ))
 
 

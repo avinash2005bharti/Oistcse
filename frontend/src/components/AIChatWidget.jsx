@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useERP } from '../context/ERPContext';
 import { aiApi } from '../api/aiApi';
+import { fileApi } from '../api/fileApi';
 import {
   Bot,
   Sparkles,
@@ -148,13 +149,33 @@ export default function AIChatWidget() {
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      setAttachedFile({
-        name: file.name,
-        size: (file.size / 1024).toFixed(1) + ' KB'
-      });
+      try {
+        const res = await fileApi.upload(file, conversationIdRef.current);
+        if (res && res.file) {
+          setAttachedFile({
+            id: res.file.id,
+            name: res.file.filename,
+            size: (file.size / 1024).toFixed(1) + ' KB',
+            type: res.file.fileType,
+            url: res.file.storageUrl || '',
+            status: 'ready'
+          });
+        } else {
+          setAttachedFile({
+            name: file.name,
+            size: (file.size / 1024).toFixed(1) + ' KB'
+          });
+        }
+      } catch (uploadErr) {
+        console.warn('Widget file upload warning:', uploadErr);
+        setAttachedFile({
+          name: file.name,
+          size: (file.size / 1024).toFixed(1) + ' KB'
+        });
+      }
     }
     e.target.value = '';
   };
@@ -163,11 +184,12 @@ export default function AIChatWidget() {
     const query = (textToSend || prompt).trim();
     if (!query && !attachedFile) return;
 
+    const fileRef = attachedFile ? { ...attachedFile } : null;
     const userMsg = {
       id: `msg-${Date.now()}`,
       role: 'user',
       text: query,
-      attachment: attachedFile,
+      attachment: fileRef,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -181,7 +203,9 @@ export default function AIChatWidget() {
         prompt: query,
         role: currentRole || 'student',
         user_id: currentUser?.id || 'user_default',
-        conversation_id: conversationIdRef.current
+        conversation_id: conversationIdRef.current,
+        attachment: fileRef,
+        file_id: fileRef?.id || null
       });
 
       const responseText = res?.answer || res?.data?.answer;
@@ -289,29 +313,7 @@ export default function AIChatWidget() {
           gap: '0.5rem'
         }}
       >
-        {!isOpen && (location.pathname.startsWith('/tg') || currentRole === 'tg') && (
-          <button
-            onClick={() => setIsOpen(true)}
-            style={{
-              padding: '0.45rem 0.85rem',
-              backgroundColor: '#1e293b',
-              color: '#ffffff',
-              borderRadius: '9999px',
-              fontSize: '11px',
-              fontWeight: 600,
-              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.25)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              transition: 'background 0.15s ease'
-            }}
-            className="hover:bg-slate-800"
-          >
-            <span>Ask about your Section A students</span>
-          </button>
-        )}
+
 
         <button
           onClick={() => setIsOpen((prev) => !prev)}

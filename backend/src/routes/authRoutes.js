@@ -46,10 +46,22 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 });
 
+const verifyStudentPreData = require('../middleware/verifyStudentPreData');
+
 router.post('/login', authLimiter, authController.login);
 router.post('/register', authLimiter, authController.register);
-router.post('/register/student', authLimiter, authController.registerStudent);
-router.post('/register/teacher', authLimiter, authController.registerTeacher);
+router.post('/register/student', authLimiter, verifyStudentPreData, authController.registerStudent);
+
+// SEC-AUTH: Faculty self-registration is permanently disabled.
+// Faculty accounts are provisioned directly by HOD / Admin via Master Data.
+router.post('/register/teacher', (req, res) => {
+  return res.status(403).json({
+    success: false,
+    code: 'FACULTY_SELF_REGISTRATION_DISABLED',
+    message: 'Faculty self-registration is disabled. Faculty accounts are appointed and provisioned exclusively by Department Administration via Master Data.'
+  });
+});
+
 router.post('/register/admin', authLimiter, authController.registerAdmin);
 router.post('/refresh', authController.refreshToken);
 router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPassword);

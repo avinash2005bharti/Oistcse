@@ -253,6 +253,10 @@ const startServer = async () => {
       logger.info(`• Static Uploads: http://localhost:${PORT}/uploads`);
       logger.info(`• Socket.IO:      ws://localhost:${PORT}`);
       logger.info(`======================================================`);
+
+      // Sync verified student roster to MongoDB predata for production auth
+      const { syncExistingStudentsToMongo } = require('./services/studentPreDataSync');
+      syncExistingStudentsToMongo().catch((err) => logger.warn(`[Sync Warning]: ${err.message}`));
     });
   } catch (err) {
     logger.error(`[Server] Fatal startup error: ${err.message}`);

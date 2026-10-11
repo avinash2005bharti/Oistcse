@@ -57,7 +57,7 @@ export default function TgMyStudents() {
               My Mentees ({assignedSection || currentUser?.assignedSection || 'Section unassigned'})
             </h1>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Teacher Guardian supervision • {students.length} assigned mentees in this cohort
+              Teacher Guardian supervision • {students.length} assigned mentees in this section
             </p>
           </div>
 

@@ -195,7 +195,7 @@ export default function App() {
         {/* Public Authentication & Registration Routes */}
         <Route path="/login" element={<LoginWrapper />} />
         <Route path="/register/student" element={<StudentRegisterPage />} />
-        <Route path="/register/teacher" element={<TeacherRegisterPage />} />
+        <Route path="/register/teacher" element={<Navigate to="/login?role=faculty" replace />} />
 
         {/* Protected ERP Dashboard Layout */}
         <Route path="/" element={<ProtectedLayout />}>

@@ -1,3 +1,12 @@
+const jwt = require('jsonwebtoken');
+const path = require('path');
+let registerAgentHandlers = null;
+try {
+  registerAgentHandlers = require(path.resolve(__dirname, '../../../gateway/src/socket/agentHandlers')).registerAgentHandlers;
+} catch (e) {
+  console.warn('[Socket.IO] Note: gateway agentHandlers import note:', e.message);
+}
+
 let ioInstance = null;
 
 const initSocket = (io) => {
@@ -6,10 +15,32 @@ const initSocket = (io) => {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
+    // If handshake carries JWT, decode identity and attach agent handlers
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || '6LP4FBmCAQIy9KCbpbaTwLIGZC55bMeNiBFB2rW9GtMwLSgIbwJipqbw77i');
+        socket.user = {
+          userId: String(decoded.id || decoded.sub || decoded.userId || ''),
+          role: String(decoded.role || 'STUDENT').toUpperCase(),
+          permissions: Array.isArray(decoded.permissions) ? decoded.permissions : [],
+          tenantId: String(decoded.departmentId || 'CSE'),
+          rawToken: token
+        };
+        socket.join(`user:${socket.user.userId}`);
+        if (registerAgentHandlers) {
+          registerAgentHandlers(io, socket);
+        }
+      } catch (err) {
+        console.warn(`[Socket.IO] Handshake auth note: ${err.message}`);
+      }
+    }
+
     // Join user-specific room
     socket.on('join_user', (userId) => {
       if (userId) {
         socket.join(`user_${userId}`);
+        socket.join(`user:${userId}`);
         console.log(`[Socket.IO] Socket ${socket.id} joined user_${userId}`);
       }
     });

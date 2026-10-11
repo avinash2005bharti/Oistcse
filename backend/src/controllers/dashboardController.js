@@ -330,23 +330,19 @@ exports.getFacultyDashboard = async (req, res) => {
       }));
     }
 
-    const formattedNotices = noticesList.length > 0 ? noticesList.map(n => ({
+    const formattedNotices = noticesList.map(n => ({
       id: n.id,
       title: n.title || 'Department Notice',
       message: n.message || 'Official departmental notice details.',
       date: new Date(n.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    })) : [
-      { id: '1', title: 'Faculty meeting', message: 'Brief excerpt in faculty meeting, as therefore is a...', date: 'Oct 10' },
-      { id: '2', title: 'Internal assessment submission', message: 'Internal assessment submission (brief excerpt)...', date: 'Oct 8' },
-      { id: '3', title: 'Department circular', message: 'Official notices from HOD, Admin Faculty here a...', date: 'Oct 6' }
-    ];
+    }));
 
     const pendingActions = {
-      leaveRequests: pendingLeavesCount || 3,
-      attendanceConsiderations: pendingConsiderationsCount || 2,
-      assignmentReviews: 4,
-      feedbackPending: 1,
-      total: (pendingLeavesCount || 3) + (pendingConsiderationsCount || 2) + 4 + 1
+      leaveRequests: pendingLeavesCount || 0,
+      attendanceConsiderations: pendingConsiderationsCount || 0,
+      assignmentReviews: 0,
+      feedbackPending: 0,
+      total: (pendingLeavesCount || 0) + (pendingConsiderationsCount || 0)
     };
 
     return res.status(200).json({
@@ -1243,30 +1239,53 @@ exports.getTgDashboard = async (req, res) => {
     // 11. Schedule and Today's Attendance
     let todaySchedule = todaySlotsRaw;
     if ((!todaySchedule || todaySchedule.length === 0) && allTimetableSlots.length > 0) {
-      // Use assigned timetable slots so dashboard displays realistic class schedule
       todaySchedule = allTimetableSlots.slice(0, 4);
     }
 
-    const formattedSchedule = todaySchedule.map((slot, sIdx) => ({
-      id: slot.id,
-      period: slot.periodNumber || (sIdx + 1),
-      startTime: slot.startTime || (sIdx === 0 ? '10:00' : sIdx === 1 ? '11:00' : '2:00'),
-      endTime: slot.endTime || (sIdx === 0 ? '11:00' : sIdx === 1 ? '12:00' : '3:00'),
-      subject: slot.subject?.name || (sIdx === 0 ? 'Database Management Systems' : sIdx === 1 ? 'Data Structures' : 'Operating Systems'),
-      subjectCode: slot.subject?.code || '',
-      room: slot.classroom?.roomNumber || (sIdx === 0 ? 'Room 204' : sIdx === 1 ? 'Room 301' : 'Lab 2'),
-      sectionId: slot.sectionId,
-      section: slot.section?.name || activeCohort.section || 'A',
-      isLab: Boolean(slot.isLab || slot.subject?.type === 'PRACTICAL')
-    }));
+    const formattedSchedule = todaySchedule
+      .filter(slot => slot && (slot.subject || slot.subjectId))
+      .map((slot, sIdx) => ({
+        id: slot.id,
+        period: slot.periodNumber || (sIdx + 1),
+        startTime: slot.startTime || '10:00 AM',
+        endTime: slot.endTime || '11:00 AM',
+        subject: slot.subject?.name || 'Lecture',
+        subjectCode: slot.subject?.code || '',
+        room: slot.classroom?.roomNumber || 'Room 101',
+        sectionId: slot.sectionId,
+        section: slot.section?.name || activeCohort.section || 'A',
+        isLab: Boolean(slot.isLab || slot.subject?.type === 'PRACTICAL')
+      }));
 
     let todaySectionAttendance = 0;
     if (todayRecords.length > 0) {
       const presentCount = todayRecords.filter(r => ['PRESENT', 'Present', 'LATE', 'Late'].includes(r.status)).length;
       todaySectionAttendance = Math.round((presentCount / todayRecords.length) * 100);
     } else {
-      todaySectionAttendance = Math.round(averageAttendance) || 87;
+      todaySectionAttendance = Math.round(averageAttendance) || 0;
     }
+
+    // Filter notices to assigned section and semester only (never show other semesters' student requests)
+    const activeSemNumber = activeCohort.semester || 8;
+    const filteredNotices = notices.filter(n => {
+      const text = `${n.title || ''} ${n.message || ''}`.toLowerCase();
+      for (let s = 1; s <= 8; s++) {
+        if (s !== activeSemNumber) {
+          if (text.includes(`${s}th sem`) || text.includes(`sem ${s}`) || text.includes(`semester ${s}`)) {
+            return false;
+          }
+        }
+      }
+      if (text.includes('new request from') || text.includes('lodged an on-duty') || text.includes('od request')) {
+        const matchesMentee = enrichedMentees.some(m =>
+          text.includes(m.name.toLowerCase()) ||
+          (m.rollNo && text.includes(m.rollNo.toLowerCase())) ||
+          (m.enrollmentNo && text.includes(m.enrollmentNo.toLowerCase()))
+        );
+        if (!matchesMentee) return false;
+      }
+      return true;
+    });
 
     // 12. Real Recent Activity Timeline
     const activityItems = [];
@@ -1369,7 +1388,7 @@ exports.getTgDashboard = async (req, res) => {
         mentees: enrichedMentees,
         todaySchedule: formattedSchedule,
         todaySectionAttendance,
-        notices: notices.map(n => ({
+        notices: filteredNotices.map(n => ({
           ...n,
           department: tgTeacher.department?.name || 'CSE Department'
         })),

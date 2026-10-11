@@ -133,7 +133,7 @@ exports.getStudentById = async (req, res) => {
       if (!isAssigned) {
         return res.status(403).json({
           success: false,
-          message: 'Access denied: This student is not assigned to your mentorship cohort.'
+          message: 'Access denied: This student is not assigned to your mentorship group.'
         });
       }
     }

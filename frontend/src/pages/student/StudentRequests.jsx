@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useERP } from '../../context/ERPContext';
 import RequestCard from '../../components/RequestCard';
 import DocumentUploader from '../../components/common/DocumentUploader';
@@ -302,7 +303,7 @@ export default function StudentRequests() {
       </div>
 
       {/* Apply Leave Modal */}
-      {leaveModalOpen && (
+      {leaveModalOpen && typeof document !== 'undefined' && createPortal(
         <div className="modal-backdrop">
           <div className="modal-content">
             <div className="modal-header">
@@ -418,7 +419,8 @@ export default function StudentRequests() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -118,8 +118,8 @@ exports.uploadFile = async (req, res) => {
         user: req.user
       };
 
-      // ARCH-02: Only pass local_path if explicitly enabled in local dev
-      if (process.env.ALLOW_LOCAL_FILE_PATH === 'true') {
+      // Accelerate processing with direct local path if file exists on disk
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
         payload.local_path = path.resolve(tempFilePath);
       }
 

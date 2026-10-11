@@ -6,14 +6,16 @@
 import { apiClient } from './client';
 
 export const aiApi = {
-  chat({ prompt, message, conversation_id, conversationId, role, user_id, confirmed_action }) {
+  chat({ prompt, message, conversation_id, conversationId, role, user_id, confirmed_action, attachment, file_id, fileId }) {
     return apiClient.post('/ai/chat', {
       prompt: prompt || message,
       message: message || prompt,
       conversation_id: conversation_id || conversationId,
       role,
       user_id,
-      confirmed_action
+      confirmed_action,
+      attachment,
+      file_id: file_id || fileId || attachment?.id || null
     });
   },
 

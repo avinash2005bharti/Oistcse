@@ -1,0 +1,54 @@
+agents:
+  student:
+    display_name: "Student Academic Assistant"
+    inherits: []
+    tools:
+      - get_my_attendance
+      - get_my_timetable
+      - get_my_leaves
+      - apply_leave
+      - submit_attendance_query
+      - parse_resume
+    prompt_file: prompts/student.md
+
+  teacher:
+    display_name: "Faculty Teaching Assistant"
+    inherits: []
+    tools:
+      - get_my_schedule
+      - get_section_attendance
+      - mark_attendance
+      - parse_resume
+    prompt_file: prompts/teacher.md
+
+  tg:
+    display_name: "Tutor Guardian Copilot"
+    inherits: [teacher]
+    tools:
+      - get_mentees_list
+      - get_low_attendance_students
+      - get_pending_student_leaves
+      - approve_leave_tg
+      - reject_leave_tg
+    prompt_file: prompts/tg.md
+
+  hod:
+    display_name: "Department Head Executive Agent"
+    inherits: [tg]
+    tools:
+      - get_department_health
+      - get_all_teachers
+      - get_pending_hod_leaves
+      - approve_leave_hod
+      - generate_timetable
+      - extract_invoice_from_image
+    prompt_file: prompts/hod.md
+
+  admin:
+    display_name: "Institutional Admin Supervisor"
+    inherits: [hod]
+    tools:
+      - get_system_users
+      - get_audit_logs
+      - deactivate_user
+    prompt_file: prompts/admin.md

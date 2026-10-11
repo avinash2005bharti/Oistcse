@@ -206,15 +206,22 @@ export default function StudentRegisterPage() {
           </div>
 
           {error && (
-            <div className="p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2.5">
-                <AlertCircle size={17} className="shrink-0 text-rose-600" />
-                <span>{error}</span>
+            <div className="p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <AlertCircle size={17} className="shrink-0 text-rose-600" />
+                  <span>{error}</span>
+                </div>
+                {(error.toLowerCase().includes('already registered') || error.toLowerCase().includes('already exists')) && (
+                  <Link to="/login" className="font-bold underline text-blue-700 whitespace-nowrap ml-2">
+                    Sign in here →
+                  </Link>
+                )}
               </div>
-              {error.toLowerCase().includes('already exists') && (
-                <Link to="/login" className="font-bold underline text-blue-700 whitespace-nowrap ml-2">
-                  Sign in here →
-                </Link>
+              {(error.toLowerCase().includes('admin') || error.toLowerCase().includes('roster')) && (
+                <div className="mt-1 pt-2 border-t border-rose-200 text-[11px] text-rose-700 flex items-center gap-1.5 font-medium">
+                  <span>🏛️ <strong>Department Roster Notice:</strong> If your enrollment or name was rejected, contact your Tutor Guardian (TG) or Department Admin / HOD to verify your entry in Master Data.</span>
+                </div>
               )}
             </div>
           )}

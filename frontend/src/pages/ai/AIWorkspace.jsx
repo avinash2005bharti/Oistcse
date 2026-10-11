@@ -288,7 +288,8 @@ export default function AIWorkspace() {
           name: res.file.filename,
           size: `${(file.size / 1024).toFixed(1)} KB`,
           type: res.file.fileType,
-          status: 'processing'
+          url: res.file.storageUrl || '',
+          status: 'ready'
         });
 
         // Add upload confirmation in conversation
@@ -298,7 +299,7 @@ export default function AIWorkspace() {
             id: `sys-upload-${Date.now()}`,
             role: 'assistant',
             agentUsed: 'DocumentIntelligenceAgent',
-            text: `📁 **File Attached:** \`${file.name}\` (${(file.size / 1024).toFixed(1)} KB)\n\nThe Universal File Intelligence Pipeline has queued this document for extraction, chunking, and semantic indexing. You can now execute operations or ask questions referencing this file!`,
+            text: `📁 **File Attached:** \`${file.name}\` (${(file.size / 1024).toFixed(1)} KB)\n\nThe Universal File Intelligence Pipeline has registered and processed this document. You can now execute operations, request visual analysis, or ask questions referencing this file!`,
             timestamp: new Date().toISOString()
           }
         ]);
@@ -316,11 +317,20 @@ export default function AIWorkspace() {
   };
 
   // Send message
-  const handleSendMessage = async (textToSend, confirmedAction = null) => {
+  const handleSendMessage = async (textToSend, confirmedAction = null, docOverride = null) => {
     const query = (textToSend !== undefined ? textToSend : prompt).trim();
-    if (!query && !attachedFile && !confirmedAction) return;
+    const effectiveAttachment = docOverride
+      ? {
+          id: docOverride._id || docOverride.id,
+          name: docOverride.originalName || docOverride.filename || 'document',
+          type: docOverride.fileType || 'file',
+          url: docOverride.storageUrl || '',
+          status: docOverride.processingStatus || 'ready'
+        }
+      : attachedFile;
+    if (!query && !effectiveAttachment && !confirmedAction) return;
 
-    const fileRef = attachedFile ? { ...attachedFile } : null;
+    const fileRef = effectiveAttachment ? { ...effectiveAttachment } : null;
     const userMessage = {
       id: `usr-${Date.now()}`,
       role: 'user',
@@ -572,7 +582,7 @@ export default function AIWorkspace() {
               userDocuments.map(doc => (
                 <div
                   key={doc._id}
-                  onClick={() => handleSendMessage(`Analyze ${doc.originalName || doc.filename} and summarize its key contents.`)}
+                  onClick={() => handleSendMessage(`Analyze ${doc.originalName || doc.filename} and summarize its key contents.`, null, doc)}
                   style={{
                     backgroundColor: 'var(--surface)',
                     padding: '0.65rem',

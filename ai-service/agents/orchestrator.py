@@ -41,7 +41,8 @@ class CentralAgentOrchestrator:
         target_agent: Optional[str] = None,
         context_history: Optional[List[Dict[str, str]]] = None,
         user_context: Optional[Dict[str, Any]] = None,
-        file_id: Optional[str] = None
+        file_id: Optional[str] = None,
+        attachment: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes Central Operational Agent Orchestration Pipeline.
@@ -96,7 +97,8 @@ class CentralAgentOrchestrator:
                 conversation_id=conversation_id,
                 agent_def=agent_def,
                 context_history=context_history,
-                file_id=file_id
+                file_id=file_id,
+                attachment=attachment
             )
             return result
         except Exception as exec_err:

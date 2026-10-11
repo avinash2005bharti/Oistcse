@@ -7,10 +7,12 @@ const Conversation = require('./Conversation');
 const Message = require('./Message');
 const AgentRun = require('./AgentRun');
 const ShortTermMemory = require('./ShortTermMemory');
+const StudentPreData = require('./StudentPreData');
 
 module.exports = {
   Conversation,
   Message,
   AgentRun,
-  ShortTermMemory
+  ShortTermMemory,
+  StudentPreData
 };

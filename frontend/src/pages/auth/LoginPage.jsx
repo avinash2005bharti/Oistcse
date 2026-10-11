@@ -386,46 +386,36 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          {/* Registration Links */}
+          {/* Registration Links (Faculty Registration Removed per Production Auth Policy) */}
           <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
             <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', display: 'block', marginBottom: '0.75rem' }}>
-              Self-Registration Gateways
+              Student Self-Registration
             </span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
+            <div>
               <Link
                 to="/register/student"
                 className="btn btn-outline"
                 style={{
                   fontSize: 'var(--text-xs)',
-                  padding: '0.6rem 0.5rem',
+                  padding: '0.7rem 1rem',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '0.4rem',
-                  textDecoration: 'none'
+                  gap: '0.5rem',
+                  textDecoration: 'none',
+                  width: '100%',
+                  fontWeight: 600,
+                  borderRadius: 'var(--radius-lg)'
                 }}
               >
-                <GraduationCap size={15} style={{ color: 'var(--primary)' }} />
-                <span>New Student?</span>
-              </Link>
-
-              <Link
-                to="/register/teacher"
-                className="btn btn-outline"
-                style={{
-                  fontSize: 'var(--text-xs)',
-                  padding: '0.6rem 0.5rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.4rem',
-                  textDecoration: 'none'
-                }}
-              >
-                <Briefcase size={15} style={{ color: 'var(--accent-purple)' }} />
-                <span>New Faculty?</span>
+                <GraduationCap size={16} style={{ color: 'var(--primary)' }} />
+                <span>New Student? Create Student Account</span>
+                <ArrowRight size={14} style={{ color: 'var(--text-muted)', marginLeft: 'auto' }} />
               </Link>
             </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '0.65rem', marginBottom: 0, textAlign: 'center' }}>
+              Faculty & Staff accounts are provisioned exclusively by Department Administration.
+            </p>
           </div>
         </div>
       </div>

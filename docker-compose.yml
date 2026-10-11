@@ -52,6 +52,16 @@ services:
     networks:
       - cse_erp_net
 
+  # 3b. Redis for AI Session Memory & Pending Write Proposals
+  redis:
+    image: redis:7-alpine
+    container_name: cse_erp_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - cse_erp_net
+
   # 4. AI Microservice: Python FastAPI + Groq LLM + Qdrant (768 Dimensions)
   python-ai:
     build:

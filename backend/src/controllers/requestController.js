@@ -1519,17 +1519,17 @@ exports.syncAllToGoogleSheet = async (req, res) => {
     const [leaves, considerations, queries] = await Promise.all([
       prisma.leaveApplication.findMany({
         where: filter === 'approved' ? { status: { in: ['APPROVED', 'approved', 'approved_by_hod'] } } : {},
-        include: { student: { include: { user: true } }, teacher: true },
+        include: { student: { include: { user: true, section: true } }, teacher: true },
         orderBy: { createdAt: 'desc' }
       }),
       prisma.attendanceConsiderationRequest.findMany({
         where: filter === 'approved' ? { status: { in: ['APPROVED', 'approved', 'approved_by_hod'] } } : {},
-        include: { student: { include: { user: true } }, subject: true },
+        include: { student: { include: { user: true, section: true } }, subject: true },
         orderBy: { createdAt: 'desc' }
       }),
       prisma.attendanceCorrectionRequest.findMany({
         where: filter === 'approved' ? { status: { in: ['APPROVED', 'approved', 'approved_by_hod'] } } : {},
-        include: { student: { include: { user: true } }, subject: true },
+        include: { student: { include: { user: true, section: true } }, subject: true },
         orderBy: { createdAt: 'desc' }
       })
     ]);

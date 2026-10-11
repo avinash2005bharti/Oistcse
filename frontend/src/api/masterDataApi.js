@@ -110,5 +110,22 @@ export const masterDataApi = {
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
+  },
+
+  // --- Sample Template Download (.xlsx or .csv) ---
+  async downloadSampleTemplate(type, format = 'xlsx') {
+    const blob = await apiClient.get(`/master-data/sample-template/${type}?format=${format}`, { responseType: 'blob' });
+    const mimeType = format === 'csv'
+      ? 'text/csv;charset=utf-8;'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const ext = format === 'csv' ? 'csv' : 'xlsx';
+    const url = window.URL.createObjectURL(new Blob([blob], { type: mimeType }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${type}_import_sample_template.${ext}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   }
 };

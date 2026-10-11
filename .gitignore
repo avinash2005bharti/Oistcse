@@ -72,7 +72,6 @@ env/
 
 # Local Vector Storage & Temporary Upload Deliverables
 ai-service/qdrant_data/
-backend/uploads/*.xlsx
-backend/uploads/*.pdf
-backend/uploads/*.docx
+backend/uploads/*
+!backend/uploads/.gitkeep
 backend/data/

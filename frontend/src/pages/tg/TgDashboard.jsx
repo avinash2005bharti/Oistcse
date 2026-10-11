@@ -4,6 +4,7 @@ import { useERP } from '../../context/ERPContext';
 import { dashboardApi } from '../../api/dashboardApi';
 import { leaveApi } from '../../api/leaveApi';
 import { requestApi } from '../../api/requestApi';
+import AttendanceLeaveReportsModal from '../../components/modals/AttendanceLeaveReportsModal';
 import './TgDashboard.css';
 import {
   Activity,
@@ -35,8 +36,7 @@ import {
   Sun,
   User,
   Users,
-  X,
-  Sparkles
+  X
 } from 'lucide-react';
 
 export default function TgDashboard({ embedded = false }) {
@@ -77,15 +77,8 @@ export default function TgDashboard({ embedded = false }) {
   const [isCriticalAttendanceModalOpen, setIsCriticalAttendanceModalOpen] = useState(false);
   const [criticalSearch, setCriticalSearch] = useState('');
 
-  // Consideration & Planned Leave Reports Modal (matching Teacher Dashboard)
+  // Consideration & Planned Leave Reports Modal (matching Image 1)
   const [isConsiderationModalOpen, setIsConsiderationModalOpen] = useState(false);
-  const [considerationTab, setConsiderationTab] = useState('attendance'); // 'attendance' | 'leaves'
-  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState('ALL');
-  const [selectedSectionFilter, setSelectedSectionFilter] = useState('ALL');
-  const [considerationSearch, setConsiderationSearch] = useState('');
-  const [loadingReports, setLoadingReports] = useState(false);
-  const [considerationList, setConsiderationList] = useState([]);
-  const [leaveList, setLeaveList] = useState([]);
 
   // Fetch TG Dashboard Data
   const fetchTgData = async (sectionId = null, isRefresh = false) => {
@@ -104,7 +97,7 @@ export default function TgDashboard({ embedded = false }) {
         setSelectedSectionId(response.data.cohort.sectionId);
       }
     } catch (err) {
-      setError(err.message || 'Unable to load assigned cohort data.');
+      setError(err.message || 'Unable to load assigned section data.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -115,48 +108,40 @@ export default function TgDashboard({ embedded = false }) {
     fetchTgData(selectedSectionId);
   }, [selectedSectionId]);
 
-  // Derived Dynamic Data
+  // Derived Dynamic Data directly from real backend database
   const mentor = dashboard?.mentor || {};
   const cohort = dashboard?.cohort || {};
   const stats = dashboard?.stats || {};
   const availableCohorts = cohort?.availableCohorts || mentor?.assignedSections || [];
   const mentees = dashboard?.mentees || [];
 
-  const studentHealth = (dashboard?.studentHealth && (dashboard.studentHealth.good?.count > 0 || dashboard.studentHealth.needsAttention?.count > 0))
-    ? dashboard.studentHealth
-    : {
-        good: { count: 31, percentage: 74 },
-        needsAttention: { count: 7, percentage: 17 },
-        atRisk: { count: 4, percentage: 10 }
-      };
+  const studentHealth = dashboard?.studentHealth || {
+    good: { count: mentees.filter(m => (m.attendanceRate ?? 100) >= 75).length, percentage: mentees.length ? Math.round((mentees.filter(m => (m.attendanceRate ?? 100) >= 75).length / mentees.length) * 100) : 100 },
+    needsAttention: { count: mentees.filter(m => (m.attendanceRate ?? 100) < 75 && (m.attendanceRate ?? 100) >= 65).length, percentage: mentees.length ? Math.round((mentees.filter(m => (m.attendanceRate ?? 100) < 75 && (m.attendanceRate ?? 100) >= 65).length / mentees.length) * 100) : 0 },
+    atRisk: { count: mentees.filter(m => (m.attendanceRate ?? 100) < 65).length, percentage: mentees.length ? Math.round((mentees.filter(m => (m.attendanceRate ?? 100) < 65).length / mentees.length) * 100) : 0 }
+  };
 
   const rawDist = dashboard?.attendanceDistribution || dashboard?.distribution;
-  const distribution = (rawDist && ((rawDist.excellent || 0) + (rawDist.good || 0) + (rawDist.low || 0) + (rawDist.critical || 0) > 0))
-    ? rawDist
-    : {
-        excellent: 18,
-        good: 14,
-        low: 7,
-        critical: 3
-      };
+  const distribution = rawDist || {
+    excellent: mentees.filter(m => (m.attendanceRate ?? 100) >= 90).length,
+    good: mentees.filter(m => (m.attendanceRate ?? 100) >= 75 && (m.attendanceRate ?? 100) < 90).length,
+    low: mentees.filter(m => (m.attendanceRate ?? 100) >= 60 && (m.attendanceRate ?? 100) < 75).length,
+    critical: mentees.filter(m => (m.attendanceRate ?? 100) < 60).length
+  };
 
-  const attentionStudents = (dashboard?.studentsNeedingAttention && dashboard.studentsNeedingAttention.length > 0)
-    ? dashboard.studentsNeedingAttention
-    : [];
-  const todaySchedule = (dashboard?.todaySchedule && dashboard.todaySchedule.length > 0)
-    ? dashboard.todaySchedule
-    : [];
-  const todaySectionAttendance = dashboard?.todaySectionAttendance || 87;
+  const attentionStudents = dashboard?.studentsNeedingAttention || [];
+  const todaySchedule = dashboard?.todaySchedule || [];
+  const todaySectionAttendance = typeof dashboard?.todaySectionAttendance === 'number'
+    ? dashboard.todaySectionAttendance
+    : Math.round(dashboard?.averageAttendance || 0);
   const rawNotices = dashboard?.notices || [];
   const recentActivity = dashboard?.recentActivity || [];
-  const pendingActions = (dashboard?.pendingActions && (dashboard.pendingActions.leaves > 0 || dashboard.pendingActions.total > 0))
-    ? dashboard.pendingActions
-    : {
-        leaves: 2,
-        considerations: 1,
-        corrections: 1,
-        total: 4
-      };
+  const pendingActions = dashboard?.pendingActions || {
+    leaves: 0,
+    considerations: 0,
+    corrections: 0,
+    total: 0
+  };
 
   // Mentor Display Profile
   const mentorName = mentor.name || currentUser?.name || 'Test Teacher';
@@ -167,39 +152,25 @@ export default function TgDashboard({ embedded = false }) {
     .map((w) => w[0].toUpperCase())
     .join('') || 'TT';
 
-  // Cohort labels
+  // Cohort labels strictly matching assigned section & semester
   const deptCode = cohort.department || mentor.department?.code || 'CSE';
-  const semesterLabel = cohort.semesterOrdinal || `${cohort.semester || 5}th Semester`;
-  const sectionLabel = cohort.section ? `Section ${cohort.section}` : 'Section A';
-  const totalMenteesCount = stats.totalMentees || (mentees.length > 0 ? mentees.length : 42);
-  const averageAttendance = stats.averageAttendance || dashboard?.averageAttendance || 87.4;
-  const academicAverage = stats.academicAverage || dashboard?.academicAverage || '8.1 CGPA';
-  const attentionCount = stats.attentionCount || (attentionStudents.length > 0 ? attentionStudents.length : 6);
-  const attentionPercentage = stats.attentionPercentage || (totalMenteesCount ? Math.round((attentionCount / totalMenteesCount) * 100) : 14);
-  const pendingRequestsCount = stats.pendingRequests || pendingActions.total || 4;
+  const semesterLabel = cohort.semesterOrdinal || (cohort.semester ? `${cohort.semester}th Semester` : '8th Semester');
+  const sectionLabel = cohort.section ? `Section ${cohort.section}` : 'Section B';
+  const totalMenteesCount = typeof stats.totalMentees === 'number' ? stats.totalMentees : mentees.length;
+  const averageAttendance = typeof stats.averageAttendance === 'number' ? stats.averageAttendance : (dashboard?.averageAttendance ?? 0);
+  const academicAverage = stats.academicAverage || dashboard?.academicAverage || '—';
+  const attentionCount = typeof stats.attentionCount === 'number' ? stats.attentionCount : attentionStudents.length;
+  const attentionPercentage = stats.attentionPercentage ?? (totalMenteesCount ? Math.round((attentionCount / totalMenteesCount) * 100) : 0);
+  const pendingRequestsCount = stats.pendingRequests ?? pendingActions.total ?? 0;
 
-  // Schedule Fallback
-  const displaySchedule = todaySchedule.length > 0 ? todaySchedule : [
-    { id: 'sc1', startTime: '10:00', endTime: '11:00', subject: 'Database Management Systems', room: 'Room 204', isLab: false },
-    { id: 'sc2', startTime: '11:00', endTime: '12:00', subject: 'Data Structures', room: 'Room 301', isLab: false },
-    { id: 'sc3', startTime: '2:00', endTime: '3:00', subject: 'Operating Systems', room: 'Lab 2', isLab: true }
-  ];
+  // Real Database Schedule without mock fallbacks
+  const displaySchedule = todaySchedule;
 
-  // Students Needing Attention Fallback
-  const displayAttentionStudents = attentionStudents.length > 0 ? attentionStudents : [
-    { id: 'st1', name: 'Rahul Sharma', initials: 'RS', rollNo: 'CSE-501', attendanceRate: 68, healthStatus: 'AT_RISK', primaryIssue: 'Low Attendance', lastInteraction: '2 days ago', primaryAction: 'View' },
-    { id: 'st2', name: 'Aman Verma', initials: 'AV', rollNo: 'CSE-514', attendanceRate: 72, healthStatus: 'NEEDS_ATTENTION', primaryIssue: 'Low Internal Marks', lastInteraction: '5 days ago', primaryAction: 'View' },
-    { id: 'st3', name: 'Priya Singh', initials: 'PS', rollNo: 'CSE-523', attendanceRate: 81, healthStatus: 'NEEDS_ATTENTION', primaryIssue: 'Pending Leave', lastInteraction: 'Today', primaryAction: 'Review' },
-    { id: 'st4', name: 'Sahil Khan', initials: 'SK', rollNo: 'CSE-532', attendanceRate: 70, healthStatus: 'NEEDS_ATTENTION', primaryIssue: 'Irregular Attendance', lastInteraction: '1 day ago', primaryAction: 'View' },
-    { id: 'st5', name: 'Neha Gupta', initials: 'NG', rollNo: 'CSE-540', attendanceRate: 62, healthStatus: 'AT_RISK', primaryIssue: 'Academic Performance', lastInteraction: '3 days ago', primaryAction: 'View' }
-  ];
+  // Real Database Students Needing Attention without fake mock students
+  const displayAttentionStudents = attentionStudents;
 
-  // Notices Fallback
-  const displayNotices = rawNotices.length > 0 ? rawNotices : [
-    { id: 'n1', title: 'TG Recommendation: Avinash', content: 'OD consideration request has been recommended and forwarded to HOD for clearance.', createdAt: '2026-10-07' },
-    { id: 'n2', title: 'Mid Semester Exam Schedule Released', content: 'CSE Department examination timetable published for 5th Semester.', createdAt: '2026-10-05' },
-    { id: 'n3', title: 'Important: Lab Equipment Maintenance', content: 'Engineering Block hardware maintenance scheduled this Saturday.', createdAt: '2026-10-03' }
-  ];
+  // Real Database Notices without mock fallbacks
+  const displayNotices = rawNotices;
 
   // Filter Notices based on active tab
   const filteredNotices = useMemo(() => {
@@ -212,16 +183,12 @@ export default function TgDashboard({ embedded = false }) {
     return displayNotices;
   }, [displayNotices, noticeTab]);
 
-  // Recent Activity Fallback
-  const displayActivity = recentActivity.length > 0 ? recentActivity : [
-    { id: 'act1', title: 'Attendance consideration submitted by Rahul Sharma', time: '10:24 AM', dateGroup: 'Today' },
-    { id: 'act2', title: 'Leave request submitted by Priya Singh', time: '09:17 AM', dateGroup: 'Today' },
-    { id: 'act3', title: 'TG recommendation forwarded to HOD', time: '04:30 PM', dateGroup: 'Yesterday' }
-  ];
+  // Real Database Recent Activity without mock fallbacks
+  const displayActivity = recentActivity;
 
   // Filtered Students for Roster Modal ("student details of assigned section")
   const modalFilteredStudents = useMemo(() => {
-    const list = mentees.length > 0 ? mentees : displayAttentionStudents;
+    const list = mentees;
     let filtered = list;
     if (rosterFilter === 'risk') {
       filtered = filtered.filter(st => st.healthStatus === 'AT_RISK' || (st.attendanceRate !== null && st.attendanceRate < 65));
@@ -237,54 +204,8 @@ export default function TgDashboard({ embedded = false }) {
       st.rollNo?.toLowerCase().includes(q) ||
       st.enrollmentNo?.toLowerCase().includes(q)
     );
-  }, [mentees, displayAttentionStudents, rosterFilter, rosterSearch]);
+  }, [mentees, rosterFilter, rosterSearch]);
 
-  // Considerations data ("considered list")
-  const rawConsiderations = dashboard?.considerationRequests || [];
-  const displayConsiderations = rawConsiderations.length > 0 ? rawConsiderations : [
-    {
-      id: 'con-1',
-      studentName: 'Rahul Sharma',
-      rollNo: 'CSE-501',
-      category: 'Hackathon / Technical Competition',
-      reason: 'Smart India Hackathon 2026 Participation & Mentoring Session',
-      dates: 'Oct 5 – Oct 7, 2026',
-      classesMissed: 3,
-      currentAttendance: 68,
-      projectedAttendance: 72,
-      status: 'PENDING_TG',
-      proofUrl: '#',
-      submittedAt: 'Today, 10:24 AM'
-    },
-    {
-      id: 'con-2',
-      studentName: 'Priya Singh',
-      rollNo: 'CSE-523',
-      category: 'Medical Consideration',
-      reason: 'Hospital OPD Consultation & Severe Viral Fever recovery',
-      dates: 'Oct 3 – Oct 4, 2026',
-      classesMissed: 4,
-      currentAttendance: 81,
-      projectedAttendance: 84,
-      status: 'PENDING_TG',
-      proofUrl: '#',
-      submittedAt: 'Today, 09:17 AM'
-    },
-    {
-      id: 'con-3',
-      studentName: 'Aman Verma',
-      rollNo: 'CSE-514',
-      category: 'Inter-College Sports',
-      reason: 'State Level Badminton Championship representing OIST CSE',
-      dates: 'Sep 28 – Sep 29, 2026',
-      classesMissed: 2,
-      currentAttendance: 72,
-      projectedAttendance: 75,
-      status: 'RECOMMENDED',
-      proofUrl: '#',
-      submittedAt: '3 days ago'
-    }
-  ];
 
   // Sync On-Leave status from API
   useEffect(() => {
@@ -324,150 +245,11 @@ export default function TgDashboard({ embedded = false }) {
     }
   };
 
-  // Fetch Consideration & Leave Records (matching Teacher Dashboard)
-  const fetchConsiderationReports = async () => {
-    setLoadingReports(true);
-    try {
-      const params = {};
-      if (selectedSemesterFilter !== 'ALL') params.semester = selectedSemesterFilter;
-      if (selectedSectionFilter !== 'ALL') params.section = selectedSectionFilter;
 
-      const res = await requestApi.getAllRequests(params);
-      const considerations = res?.attendanceRequests || res?.considerationRequests || [];
-      const leaves = res?.leaveRequests || [];
-      setConsiderationList(considerations);
-      setLeaveList(leaves);
-    } catch (err) {
-      console.warn('Could not load consideration reports:', err);
-    } finally {
-      setLoadingReports(false);
-    }
-  };
-
-  useEffect(() => {
-    if (isConsiderationModalOpen) {
-      fetchConsiderationReports();
-    }
-  }, [isConsiderationModalOpen, selectedSemesterFilter, selectedSectionFilter]);
-
-  // Combined Active Lists for Consideration Modal
-  const activeConsiderations = considerationList.length > 0
-    ? considerationList
-    : (dashboard?.considerationRequests || dashboard?.pendingAttendance || displayConsiderations);
-
-  const activeLeaves = leaveList.length > 0
-    ? leaveList
-    : (dashboard?.pendingLeaves || [
-        {
-          id: 'lv-1',
-          studentName: 'Priya Singh',
-          enrollmentNo: 'CSE-523',
-          rollNo: 'CSE-523',
-          totalDays: 2,
-          startDate: '2026-10-07',
-          endDate: '2026-10-08',
-          reason: 'Medical consultation & viral recovery',
-          status: 'PENDING'
-        },
-        {
-          id: 'lv-2',
-          studentName: 'Aman Verma',
-          enrollmentNo: 'CSE-514',
-          rollNo: 'CSE-514',
-          totalDays: 1,
-          startDate: '2026-10-06',
-          endDate: '2026-10-06',
-          reason: 'Family emergency / out of station',
-          status: 'PENDING'
-        }
-      ]);
-
-  const filteredConsiderations = useMemo(() => {
-    return activeConsiderations.filter((c) => {
-      const q = considerationSearch.toLowerCase();
-      const name = (c.studentName || c.student?.name || '').toLowerCase();
-      const roll = (c.rollNo || c.enrollmentNo || c.student?.rollNo || '').toLowerCase();
-      return name.includes(q) || roll.includes(q);
-    });
-  }, [activeConsiderations, considerationSearch]);
-
-  const filteredLeaves = useMemo(() => {
-    return activeLeaves.filter((l) => {
-      const q = considerationSearch.toLowerCase();
-      const name = (l.studentName || l.student?.name || '').toLowerCase();
-      const roll = (l.rollNo || l.enrollmentNo || l.student?.rollNo || '').toLowerCase();
-      return name.includes(q) || roll.includes(q);
-    });
-  }, [activeLeaves, considerationSearch]);
-
-  const handleOpenLiveGoogleSheet = () => {
-    if (typeof addToast === 'function') {
-      addToast('Live Spreadsheet', 'Opening Google Live Sheet in browser tab.', 'info');
-    }
-    window.open('https://docs.google.com/spreadsheets', '_blank');
-  };
-
-  const handleExportSpreadsheet = () => {
-    const isAtt = considerationTab === 'attendance';
-    const rows = isAtt ? filteredConsiderations : filteredLeaves;
-    if (rows.length === 0) {
-      if (typeof addToast === 'function') addToast('No Data', 'No records to export matching current filter.', 'warning');
-      return;
-    }
-    const headers = isAtt
-      ? ['Student Name', 'Enrollment', 'Periods Count', 'Timings', 'Start Date', 'End Date', 'Reason', 'Status']
-      : ['Student Name', 'Enrollment', 'Days Count', 'Start Date', 'End Date', 'Reason', 'Status'];
-
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [
-        headers.join(','),
-        ...rows.map((r) =>
-          isAtt
-            ? `"${r.studentName || 'Student'}","${r.enrollmentNo || r.rollNo || ''}","${r.periodsCount || 1}","${r.periodsTiming || '09:00 - 10:00'}","${r.startDate || ''}","${r.endDate || ''}","${(r.reason || '').replace(/"/g, '""')}","${r.status || 'APPROVED'}"`
-            : `"${r.studentName || 'Student'}","${r.enrollmentNo || r.rollNo || ''}","${r.totalDays || 1}","${r.startDate || ''}","${r.endDate || ''}","${(r.reason || '').replace(/"/g, '""')}","${r.status || 'APPROVED'}"`
-        )
-      ].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${isAtt ? 'attendance_consideration_report' : 'student_leave_list'}_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    if (typeof addToast === 'function') addToast('Report Exported', 'Spreadsheet CSV downloaded successfully.', 'success');
-  };
-
-  const handleRecommendConsideration = async (reqId) => {
-    try {
-      await requestApi.tgReviewAttendanceConsideration(reqId, 'Recommended for clearance by Tutor Guardian');
-      if (typeof addToast === 'function') {
-        addToast('Recommended to HOD', 'Consideration request verified and forwarded to HOD.', 'success');
-      }
-      fetchConsiderationReports();
-      fetchTgData(selectedSectionId);
-    } catch (err) {
-      if (typeof addToast === 'function') addToast('Error', err.message || 'Failed to update request', 'error');
-    }
-  };
-
-  const handleRecommendLeave = async (leaveId) => {
-    try {
-      await requestApi.tgReviewLeave(leaveId, true, 'Recommended by Tutor Guardian');
-      if (typeof addToast === 'function') {
-        addToast('Leave Recommended', 'Student leave verified and recommended to HOD.', 'success');
-      }
-      fetchConsiderationReports();
-      fetchTgData(selectedSectionId);
-    } catch (err) {
-      if (typeof addToast === 'function') addToast('Error', err.message || 'Failed to update leave', 'error');
-    }
-  };
 
   // Filtered Students for Attendance Register Modal ("student | attendance")
   const modalFilteredAttendanceStudents = useMemo(() => {
-    const list = mentees.length > 0 ? mentees : displayAttentionStudents;
+    const list = mentees;
     let filtered = list;
     if (attendanceFilter === 'safe') {
       filtered = filtered.filter(st => (st.attendanceRate ?? 80) >= 75);
@@ -481,20 +263,13 @@ export default function TgDashboard({ embedded = false }) {
       st.rollNo?.toLowerCase().includes(q) ||
       st.enrollmentNo?.toLowerCase().includes(q)
     );
-  }, [mentees, displayAttentionStudents, attendanceFilter, attendanceSearch]);
+  }, [mentees, attendanceFilter, attendanceSearch]);
 
   // Students having attendance less than 50% (per sketch requirement)
   const criticalAttendanceStudents = useMemo(() => {
-    const list = mentees.length > 0 ? mentees : displayAttentionStudents;
+    const list = mentees;
     const under50 = list.filter(st => st.attendanceRate !== null && Number(st.attendanceRate) < 50);
-    const criticalList = under50.length > 0
-      ? under50
-      : [
-          { id: 'crit-1', name: 'Rahul Sharma', initials: 'RS', rollNo: 'CSE-501', enrollmentNo: '0103CS231045', attendanceRate: 42, healthStatus: 'AT_RISK', primaryIssue: 'Severe Attendance Shortage (42%)', lastInteraction: '2 days ago' },
-          { id: 'crit-2', name: 'Vikram Joshi', initials: 'VJ', rollNo: 'CSE-519', enrollmentNo: '0103CS231058', attendanceRate: 38, healthStatus: 'AT_RISK', primaryIssue: 'Critical Attendance Shortage (38%)', lastInteraction: 'Yesterday' },
-          { id: 'crit-3', name: 'Aman Verma', initials: 'AV', rollNo: 'CSE-514', enrollmentNo: '0103CS231052', attendanceRate: 46, healthStatus: 'AT_RISK', primaryIssue: 'Irregular Attendance (46%)', lastInteraction: '3 days ago' },
-          { id: 'crit-4', name: 'Neha Gupta', initials: 'NG', rollNo: 'CSE-540', enrollmentNo: '0103CS231077', attendanceRate: 44, healthStatus: 'AT_RISK', primaryIssue: 'Exam Disqualification Risk (44%)', lastInteraction: '4 days ago' }
-        ];
+    const criticalList = under50;
 
     if (!criticalSearch.trim()) return criticalList;
     const q = criticalSearch.toLowerCase();
@@ -503,7 +278,7 @@ export default function TgDashboard({ embedded = false }) {
       (st.rollNo || '').toLowerCase().includes(q) ||
       (st.enrollmentNo || '').toLowerCase().includes(q)
     );
-  }, [mentees, displayAttentionStudents, criticalSearch]);
+  }, [mentees, criticalSearch]);
 
   // Switch Active Cohort
   const handleSelectCohort = (secId) => {
@@ -717,7 +492,7 @@ export default function TgDashboard({ embedded = false }) {
               <div className="tg-kpi-title">TOTAL MENTEES</div>
               <div className="tg-kpi-value">{totalMenteesCount}</div>
               <div className="tg-kpi-subtext">
-                {deptCode} · 5th Sem · {sectionLabel}
+                {deptCode} · {cohort.semesterOrdinal || `${cohort.semester || 8}th Sem`} · {sectionLabel}
               </div>
               <div className="tg-click-hint">
                 <span>View Roster</span> <ArrowRight size={11} />
@@ -788,13 +563,12 @@ export default function TgDashboard({ embedded = false }) {
               <ArrowRight size={12} color="#94a3b8" />
             </button>
 
-            {/* View Consideration -> opens consideration & leave reports modal similar to teacher dashboard */}
+            {/* View Consideration -> opens consideration & leave reports modal matching Image 1 */}
             <button
               type="button"
               className="tg-qa-btn"
               id="tg-qa-view-consideration"
               onClick={() => {
-                setConsiderationTab('attendance');
                 setIsConsiderationModalOpen(true);
               }}
               title="Open Attendance Consideration & Planned Leave Reports"
@@ -804,7 +578,7 @@ export default function TgDashboard({ embedded = false }) {
                 <span>View Consideration</span>
               </div>
               <span className="tg-qa-badge">
-                {activeConsiderations.length || 3}
+                {pendingActions.considerations || dashboard?.pendingAttendance?.length || 0}
               </span>
             </button>
           </div>
@@ -838,7 +612,6 @@ export default function TgDashboard({ embedded = false }) {
             className="tg-kpi-card tg-kpi-clickable"
             id="tg-kpi-requests"
             onClick={() => {
-              setConsiderationTab('attendance');
               setIsConsiderationModalOpen(true);
             }}
             role="button"
@@ -883,7 +656,7 @@ export default function TgDashboard({ embedded = false }) {
               </button>
             </div>
             <p className="tg-card-subtitle">
-              Overall health of your assigned cohort
+              Overall health of your assigned section
             </p>
 
             <div className="tg-health-inner">
@@ -1014,20 +787,28 @@ export default function TgDashboard({ embedded = false }) {
             </p>
 
             <div className="tg-schedule-list">
-              {displaySchedule.slice(0, 3).map((slot, idx) => (
-                <div key={slot.id || idx} className="tg-schedule-item">
-                  <div className="tg-schedule-time">
-                    {slot.startTime || '10:00'} – {slot.endTime || '11:00'}
-                  </div>
-                  <div className="tg-schedule-details">
-                    <div className="tg-schedule-subject">{slot.subject || 'Database Management Systems'}</div>
-                    <div className="tg-schedule-room">{slot.room || 'Room 204'}</div>
-                  </div>
-                  <span className={slot.isLab ? 'tg-badge-lab' : 'tg-badge-lecture'}>
-                    {slot.isLab ? 'Lab' : 'Lecture'}
-                  </span>
+              {displaySchedule.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px dashed #cbd5e1' }}>
+                  <Calendar size={22} color="#94a3b8" style={{ margin: '0 auto 6px auto', display: 'block' }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>No lectures scheduled for {sectionLabel} today</div>
+                  <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>Use Quick Actions above to schedule an extra class.</div>
                 </div>
-              ))}
+              ) : (
+                displaySchedule.slice(0, 3).map((slot, idx) => (
+                  <div key={slot.id || idx} className="tg-schedule-item">
+                    <div className="tg-schedule-time">
+                      {slot.startTime || '10:00'} – {slot.endTime || '11:00'}
+                    </div>
+                    <div className="tg-schedule-details">
+                      <div className="tg-schedule-subject">{slot.subject || 'Lecture'}</div>
+                      <div className="tg-schedule-room">{slot.room || 'Room 101'}</div>
+                    </div>
+                    <span className={slot.isLab ? 'tg-badge-lab' : 'tg-badge-lecture'}>
+                      {slot.isLab ? 'Lab' : 'Lecture'}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
 
             {/* Today's Section Attendance Banner */}
@@ -1085,26 +866,34 @@ export default function TgDashboard({ embedded = false }) {
 
             {/* Notices List */}
             <div className="tg-notice-list">
-              {filteredNotices.slice(0, 3).map((notice) => (
-                <div
-                  key={notice.id}
-                  onClick={() => openModal('noticeDetail', { notice })}
-                  className="tg-notice-item"
-                >
-                  <div className="tg-notice-top">
-                    <div className="tg-notice-title-row">
-                      <span className="tg-notice-bullet" />
-                      <span className="tg-notice-title">{notice.title}</span>
-                    </div>
-                    <span className="tg-notice-date">
-                      {notice.createdAt ? new Date(notice.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Oct 7, 2026'}
-                    </span>
-                  </div>
-                  <p className="tg-notice-snippet">
-                    {notice.content || notice.message || 'Departmental communication for faculty and students.'}
-                  </p>
+              {filteredNotices.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px dashed #cbd5e1' }}>
+                  <Megaphone size={20} color="#94a3b8" style={{ margin: '0 auto 6px auto', display: 'block' }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>No notices posted</div>
+                  <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>No active circulars for {deptCode} · {semesterLabel} · {sectionLabel}.</div>
                 </div>
-              ))}
+              ) : (
+                filteredNotices.slice(0, 3).map((notice) => (
+                  <div
+                    key={notice.id}
+                    onClick={() => openModal('noticeDetail', { notice })}
+                    className="tg-notice-item"
+                  >
+                    <div className="tg-notice-top">
+                      <div className="tg-notice-title-row">
+                        <span className="tg-notice-bullet" />
+                        <span className="tg-notice-title">{notice.title}</span>
+                      </div>
+                      <span className="tg-notice-date">
+                        {notice.createdAt ? new Date(notice.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Today'}
+                      </span>
+                    </div>
+                    <p className="tg-notice-snippet">
+                      {notice.content || notice.message || 'Departmental communication for faculty and students.'}
+                    </p>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </section>
@@ -1143,7 +932,16 @@ export default function TgDashboard({ embedded = false }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayAttentionStudents.slice(0, 5).map((student, idx) => {
+                  {displayAttentionStudents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
+                        <CheckCircle2 size={24} color="#16a34a" style={{ margin: '0 auto 8px auto', display: 'block' }} />
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>All assigned students in {sectionLabel} have good attendance</div>
+                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>No student requires mentor intervention at this time.</div>
+                      </td>
+                    </tr>
+                  ) : (
+                    displayAttentionStudents.slice(0, 5).map((student, idx) => {
                     const att = student.attendanceRate;
                     const isAtRisk = student.healthStatus === 'AT_RISK';
 
@@ -1208,8 +1006,9 @@ export default function TgDashboard({ embedded = false }) {
                         </td>
                       </tr>
                     );
-                  })}
-                </tbody>
+                  })
+                )}
+              </tbody>
               </table>
             </div>
           </div>
@@ -1314,42 +1113,45 @@ export default function TgDashboard({ embedded = false }) {
 
               {/* Activity Timeline Groups */}
               <div>
-                <div className="tg-activity-group">
-                  <div className="tg-activity-group-title">Today</div>
-                  {(displayActivity.filter((a) => a.dateGroup === 'Today').length > 0
-                    ? displayActivity.filter((a) => a.dateGroup === 'Today')
-                    : [
-                        { id: 'act1', title: 'Attendance consideration submitted by Rahul Sharma', time: '10:24 AM' },
-                        { id: 'act2', title: 'Leave request submitted by Priya Singh', time: '09:17 AM' }
-                      ]
-                  ).map((item) => (
-                    <div key={item.id} className="tg-activity-item">
-                      <div className="tg-activity-left">
-                        <span className="tg-health-dot tg-health-dot-green" />
-                        <span>{item.title}</span>
+                {displayActivity.length === 0 ? (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px dashed #cbd5e1' }}>
+                    <Activity size={18} color="#94a3b8" style={{ margin: '0 auto 6px auto', display: 'block' }} />
+                    <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>No recent requests</div>
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Activity from {sectionLabel} students will appear here.</div>
+                  </div>
+                ) : (
+                  <>
+                    {displayActivity.filter((a) => a.dateGroup === 'Today').length > 0 && (
+                      <div className="tg-activity-group">
+                        <div className="tg-activity-group-title">Today</div>
+                        {displayActivity.filter((a) => a.dateGroup === 'Today').map((item) => (
+                          <div key={item.id} className="tg-activity-item">
+                            <div className="tg-activity-left">
+                              <span className="tg-health-dot tg-health-dot-green" />
+                              <span>{item.title}</span>
+                            </div>
+                            <span className="tg-activity-time">{item.time}</span>
+                          </div>
+                        ))}
                       </div>
-                      <span className="tg-activity-time">{item.time}</span>
-                    </div>
-                  ))}
-                </div>
+                    )}
 
-                <div className="tg-activity-group" style={{ marginBottom: 0 }}>
-                  <div className="tg-activity-group-title">Yesterday</div>
-                  {(displayActivity.filter((a) => a.dateGroup === 'Yesterday' || a.dateGroup === 'Earlier this week').length > 0
-                    ? displayActivity.filter((a) => a.dateGroup === 'Yesterday' || a.dateGroup === 'Earlier this week')
-                    : [
-                        { id: 'act3', title: 'TG recommendation forwarded to HOD', time: '04:42 PM' }
-                      ]
-                  ).map((item) => (
-                    <div key={item.id} className="tg-activity-item">
-                      <div className="tg-activity-left">
-                        <span className="tg-health-dot" style={{ backgroundColor: '#2563eb' }} />
-                        <span>{item.title}</span>
+                    {displayActivity.filter((a) => a.dateGroup === 'Yesterday' || a.dateGroup === 'Earlier this week').length > 0 && (
+                      <div className="tg-activity-group" style={{ marginBottom: 0 }}>
+                        <div className="tg-activity-group-title">Earlier</div>
+                        {displayActivity.filter((a) => a.dateGroup === 'Yesterday' || a.dateGroup === 'Earlier this week').map((item) => (
+                          <div key={item.id} className="tg-activity-item">
+                            <div className="tg-activity-left">
+                              <span className="tg-health-dot" style={{ backgroundColor: '#2563eb' }} />
+                              <span>{item.title}</span>
+                            </div>
+                            <span className="tg-activity-time">{item.time}</span>
+                          </div>
+                        ))}
                       </div>
-                      <span className="tg-activity-time">{item.time}</span>
-                    </div>
-                  ))}
-                </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1759,390 +1561,15 @@ export default function TgDashboard({ embedded = false }) {
         )}
 
         {/* =========================================================================
-            MODAL 3: ATTENDANCE CONSIDERATION & PLANNED LEAVE REPORTS (Forward to HOD)
+            MODAL 3: ATTENDANCE CONSIDERATION & PLANNED LEAVE REPORTS (Matching Image 1)
             ========================================================================= */}
-        {isConsiderationModalOpen && (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 1050,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: 'rgba(15, 23, 42, 0.65)',
-              backdropFilter: 'blur(6px)',
-              padding: '1.25rem'
-            }}
-            onClick={() => setIsConsiderationModalOpen(false)}
-          >
-            <div
-              style={{
-                backgroundColor: '#FFFFFF',
-                borderRadius: '20px',
-                maxWidth: '960px',
-                width: '100%',
-                maxHeight: '90vh',
-                display: 'flex',
-                flexDirection: 'column',
-                boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.28)',
-                border: '1px solid #E2E8F0',
-                overflow: 'hidden'
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Modal Header */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '1.25rem 1.5rem',
-                  borderBottom: '1px solid #F1F5F9',
-                  backgroundColor: '#F8FAFC'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div
-                    style={{
-                      width: '38px',
-                      height: '38px',
-                      borderRadius: '10px',
-                      backgroundColor: '#ECFDF5',
-                      color: '#059669',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    <FileSpreadsheet size={20} />
-                  </div>
-                  <div>
-                    <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>
-                      Attendance Consideration & Planned Leave Reports
-                    </h4>
-                    <span style={{ fontSize: '12px', color: '#64748B' }}>
-                      Review mentee exemption requests and recommend / forward to HOD
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsConsiderationModalOpen(false)}
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94A3B8' }}
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Modal Tabs & Filters Bar */}
-              <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid #F1F5F9', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => setConsiderationTab('attendance')}
-                      style={{
-                        padding: '7px 16px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        border: 'none',
-                        cursor: 'pointer',
-                        backgroundColor: considerationTab === 'attendance' ? '#2563EB' : '#F1F5F9',
-                        color: considerationTab === 'attendance' ? '#FFFFFF' : '#475569'
-                      }}
-                    >
-                      Attendance Consideration ({filteredConsiderations.length})
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setConsiderationTab('leaves')}
-                      style={{
-                        padding: '7px 16px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        border: 'none',
-                        cursor: 'pointer',
-                        backgroundColor: considerationTab === 'leaves' ? '#2563EB' : '#F1F5F9',
-                        color: considerationTab === 'leaves' ? '#FFFFFF' : '#475569'
-                      }}
-                    >
-                      Leave List ({filteredLeaves.length})
-                    </button>
-                  </div>
-
-                  {/* Right Actions: Live Excel & Export CSV */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <button
-                      type="button"
-                      onClick={handleOpenLiveGoogleSheet}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        border: '1px solid #A7F3D0',
-                        backgroundColor: '#ECFDF5',
-                        color: '#065F46',
-                        cursor: 'pointer'
-                      }}
-                      title="Open Live Excel Sheet in browser"
-                    >
-                      <ExternalLink size={13} />
-                      <span>Live Excel Link</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleExportSpreadsheet}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 14px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        border: '1px solid #CBD5E1',
-                        backgroundColor: '#FFFFFF',
-                        color: '#334155',
-                        cursor: 'pointer'
-                      }}
-                      title="Export records to CSV"
-                    >
-                      <Download size={13} />
-                      <span>Export CSV</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Filters Row */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Select Semester:</span>
-                    <select
-                      value={selectedSemesterFilter}
-                      onChange={(e) => setSelectedSemesterFilter(e.target.value)}
-                      style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF' }}
-                    >
-                      <option value="ALL">All Semesters</option>
-                      {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                        <option key={s} value={s}>Semester {s}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Select Section:</span>
-                    <select
-                      value={selectedSectionFilter}
-                      onChange={(e) => setSelectedSectionFilter(e.target.value)}
-                      style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', backgroundColor: '#FFFFFF' }}
-                    >
-                      <option value="ALL">All Sections</option>
-                      {['A', 'B', 'C', 'D'].map((sec) => (
-                        <option key={sec} value={sec}>Section {sec}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: '200px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '4px 10px', backgroundColor: '#FFFFFF' }}>
-                      <Search size={14} style={{ color: '#94A3B8' }} />
-                      <input
-                        type="text"
-                        placeholder="Search student name or enrollment..."
-                        value={considerationSearch}
-                        onChange={(e) => setConsiderationSearch(e.target.value)}
-                        style={{ border: 'none', outline: 'none', fontSize: '12px', width: '100%', backgroundColor: 'transparent' }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Modal Body: Tables */}
-              <div style={{ padding: '1rem 1.5rem', overflowY: 'auto', flex: 1 }}>
-                {loadingReports ? (
-                  <div style={{ padding: '3rem', textAlign: 'center', color: '#64748B' }}>
-                    <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 8px auto' }} />
-                    <p style={{ fontSize: '13px', margin: 0 }}>Loading verified records from database...</p>
-                  </div>
-                ) : considerationTab === 'attendance' ? (
-                  <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '10px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Student Name</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Enrollment</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Number of Period</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Time From - To</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Date Range</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Reason / Category</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Forward Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredConsiderations.length === 0 ? (
-                          <tr>
-                            <td colSpan="8" style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8' }}>
-                              No attendance consideration requests found for selected filters.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredConsiderations.map((c, idx) => {
-                            const isRecommended = c.status === 'RECOMMENDED' || c.status === 'RECOMMENDED_TO_HOD' || c.status === 'APPROVED';
-                            return (
-                              <tr key={c.id || idx} style={{ borderBottom: idx < filteredConsiderations.length - 1 ? '1px solid #F1F5F9' : 'none' }}>
-                                <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>{c.studentName || 'Student'}</td>
-                                <td style={{ padding: '10px 14px', color: '#64748B' }}>{c.enrollmentNo || c.rollNo || 'CSE-501'}</td>
-                                <td style={{ padding: '10px 14px', fontWeight: 600 }}>{c.periodsCount || (c.selectedPeriods?.length || 1)} Periods</td>
-                                <td style={{ padding: '10px 14px', color: '#334155' }}>{c.periodsTiming || '09:00 - 10:00'}</td>
-                                <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                                  {c.startDate ? new Date(c.startDate).toLocaleDateString() : c.dates || 'Today'}
-                                </td>
-                                <td style={{ padding: '10px 14px', color: '#334155', maxWidth: '160px' }}>
-                                  <span style={{ fontSize: '11px', fontWeight: 600, display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                                    {c.reason || c.category || 'Special Exemption'}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '10px 14px' }}>
-                                  <span
-                                    style={{
-                                      backgroundColor: isRecommended ? '#DCFCE7' : '#FEF3C7',
-                                      color: isRecommended ? '#15803D' : '#B45309',
-                                      fontWeight: 700,
-                                      fontSize: '10px',
-                                      padding: '2px 8px',
-                                      borderRadius: '10px'
-                                    }}
-                                  >
-                                    {isRecommended ? 'RECOMMENDED' : 'PENDING_TG'}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                                  {isRecommended ? (
-                                    <span style={{ color: '#16a34a', fontWeight: 700, fontSize: '11px' }}>✓ Forwarded</span>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRecommendConsideration(c.id)}
-                                      style={{
-                                        padding: '4px 10px',
-                                        backgroundColor: '#2563EB',
-                                        color: '#FFFFFF',
-                                        border: 'none',
-                                        borderRadius: '6px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      Forward to HOD
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '10px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Student Name</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Enrollment</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Days Count</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Date Range</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Reason</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
-                          <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Forward Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredLeaves.length === 0 ? (
-                          <tr>
-                            <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: '#94A3B8' }}>
-                              No student leave applications found for selected filters.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredLeaves.map((l, idx) => {
-                            const isRecommended = l.status === 'RECOMMENDED' || l.status === 'APPROVED';
-                            return (
-                              <tr key={l.id || idx} style={{ borderBottom: idx < filteredLeaves.length - 1 ? '1px solid #F1F5F9' : 'none' }}>
-                                <td style={{ padding: '10px 14px', fontWeight: 700, color: '#0F172A' }}>{l.studentName || 'Student'}</td>
-                                <td style={{ padding: '10px 14px', color: '#64748B' }}>{l.enrollmentNo || l.rollNo || 'CSE-501'}</td>
-                                <td style={{ padding: '10px 14px', fontWeight: 600 }}>{l.totalDays || 1} Days</td>
-                                <td style={{ padding: '10px 14px', color: '#64748B' }}>
-                                  {l.startDate ? new Date(l.startDate).toLocaleDateString() : 'Today'}
-                                  {l.endDate && l.endDate !== l.startDate ? ` - ${new Date(l.endDate).toLocaleDateString()}` : ''}
-                                </td>
-                                <td style={{ padding: '10px 14px', color: '#334155', maxWidth: '160px' }}>
-                                  <span style={{ fontSize: '11px', fontWeight: 600, display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                                    {l.reason || 'Leave request'}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '10px 14px' }}>
-                                  <span
-                                    style={{
-                                      backgroundColor: isRecommended ? '#DCFCE7' : '#FEF3C7',
-                                      color: isRecommended ? '#15803D' : '#B45309',
-                                      fontWeight: 700,
-                                      fontSize: '10px',
-                                      padding: '2px 8px',
-                                      borderRadius: '10px'
-                                    }}
-                                  >
-                                    {isRecommended ? 'RECOMMENDED' : 'PENDING'}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                                  {isRecommended ? (
-                                    <span style={{ color: '#16a34a', fontWeight: 700, fontSize: '11px' }}>✓ Forwarded</span>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRecommendLeave(l.id)}
-                                      style={{
-                                        padding: '4px 10px',
-                                        backgroundColor: '#2563EB',
-                                        color: '#FFFFFF',
-                                        border: 'none',
-                                        borderRadius: '6px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      Forward to HOD
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <AttendanceLeaveReportsModal
+          isOpen={isConsiderationModalOpen}
+          onClose={() => setIsConsiderationModalOpen(false)}
+          userRole="tg"
+          initialSemester={cohort.semester || 8}
+          initialSection={cohort.section || 'B'}
+        />
 
         {/* =========================================================================
             MODAL 4: CRITICAL ATTENDANCE ALERT (< 50% ATTENDANCE PER SKETCH)
@@ -2235,7 +1662,16 @@ export default function TgDashboard({ embedded = false }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {criticalAttendanceStudents.map((st, sIdx) => {
+                    {criticalAttendanceStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                          <CheckCircle2 size={24} color="#16a34a" style={{ margin: '0 auto 8px auto', display: 'block' }} />
+                          <div style={{ fontWeight: 600, color: '#1e293b' }}>No students with critical attendance (&lt; 50%)</div>
+                          <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>All mentees in {sectionLabel} maintain attendance above 50%.</div>
+                        </td>
+                      </tr>
+                    ) : (
+                      criticalAttendanceStudents.map((st, sIdx) => {
                       const rate = st.attendanceRate ?? 48;
                       return (
                         <tr key={st.id || sIdx}>
@@ -2300,42 +1736,14 @@ export default function TgDashboard({ embedded = false }) {
                           </td>
                         </tr>
                       );
-                    })}
-                  </tbody>
+                    })
+                  )}
+                </tbody>
                 </table>
               </div>
             </div>
           </div>
         )}
-
-        {/* =========================================================================
-            7. FLOATING AI ASSISTANT PILL & BUTTON
-            ========================================================================= */}
-        <div className="tg-floating-ai-container">
-          <div
-            className="tg-floating-ai-pill"
-            onClick={() => {
-              const widget = document.getElementById('ai-chat-widget-toggle-btn');
-              if (widget) widget.click();
-            }}
-          >
-            <Sparkles size={13} color="#2563eb" />
-            <span>Ask about your {sectionLabel} students</span>
-          </div>
-
-          <button
-            type="button"
-            className="tg-floating-ai-btn"
-            onClick={() => {
-              const widget = document.getElementById('ai-chat-widget-toggle-btn');
-              if (widget) widget.click();
-            }}
-            title="Open AI Assistant"
-            aria-label="Open AI Assistant"
-          >
-            <Sparkles size={19} />
-          </button>
-        </div>
 
       </div>
     </div>

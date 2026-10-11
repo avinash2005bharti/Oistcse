@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useERP } from '../../context/ERPContext';
 import ApplyLeaveModal from './ApplyLeaveModal';
 import CreateAssignmentModal from './CreateAssignmentModal';
@@ -11,36 +12,66 @@ import RequestConsiderationModal from './RequestConsiderationModal';
 import NoticeDetailModal from './NoticeDetailModal';
 import GoogleSheetSyncModal from './GoogleSheetSyncModal';
 import FormalApplicationModal from './FormalApplicationModal';
+import AttendanceLeaveReportsModal from './AttendanceLeaveReportsModal';
 
 export default function GlobalModals() {
   const { modalState, closeModal } = useERP();
 
   if (!modalState || !modalState.name) return null;
 
+  let modalContent = null;
+
   switch (modalState.name) {
     case 'applyLeave':
-      return <ApplyLeaveModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <ApplyLeaveModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'requestConsideration':
-      return <RequestConsiderationModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <RequestConsiderationModal data={modalState.data} onClose={closeModal} />;
+      break;
+    case 'attendanceLeaveReports':
+    case 'attendanceConsiderationReports':
+      modalContent = (
+        <AttendanceLeaveReportsModal
+          isOpen={true}
+          onClose={closeModal}
+          initialTab={modalState.data?.initialTab || modalState.data?.tab || 'attendance'}
+          initialSemester={modalState.data?.semester || 'ALL'}
+          initialSection={modalState.data?.section || 'ALL'}
+          userRole={modalState.data?.role || 'all'}
+        />
+      );
+      break;
     case 'createAssignment':
-      return <CreateAssignmentModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <CreateAssignmentModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'submitAssignment':
-      return <SubmitAssignmentModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <SubmitAssignmentModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'sendNotice':
-      return <SendNoticeModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <SendNoticeModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'viewNotice':
-      return <NoticeDetailModal notice={modalState.data} onClose={closeModal} />;
+      modalContent = <NoticeDetailModal notice={modalState.data} onClose={closeModal} />;
+      break;
     case 'scheduleLecture':
-      return <ScheduleLectureModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <ScheduleLectureModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'studentFeedback':
-      return <StudentFeedbackModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <StudentFeedbackModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'studentDetail':
-      return <StudentDetailModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <StudentDetailModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'googleSheet':
-      return <GoogleSheetSyncModal data={modalState.data} onClose={closeModal} />;
+      modalContent = <GoogleSheetSyncModal data={modalState.data} onClose={closeModal} />;
+      break;
     case 'formalApplication':
-      return <FormalApplicationModal request={modalState.data?.request || modalState.data} onClose={closeModal} />;
+      modalContent = <FormalApplicationModal request={modalState.data?.request || modalState.data} onClose={closeModal} />;
+      break;
     default:
       return null;
   }
+
+  if (!modalContent) return null;
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

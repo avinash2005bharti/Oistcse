@@ -79,9 +79,13 @@ class IntelligentChunker:
                 chunks.append(chunk_meta)
                 chunk_idx += 1
 
-            start = end - self.chunk_overlap
-            if start >= end:
-                start = end
+            if end >= text_len:
+                break
+
+            next_start = end - self.chunk_overlap
+            if next_start <= start:
+                next_start = end
+            start = next_start
 
         logger.info(f"[Chunker] Created {len(chunks)} chunks from '{filename}' ({file_type})")
         return chunks

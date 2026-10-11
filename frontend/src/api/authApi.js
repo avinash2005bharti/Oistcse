@@ -18,7 +18,7 @@ export const authApi = {
     return res;
   },
 
-  // Student Self-Registration (Strictly 'student' role, no privileged selection)
+  // Student Self-Registration (Verified against pre-data student roster in MongoDB)
   async registerStudent({
     name,
     email,
@@ -30,8 +30,7 @@ export const authApi = {
     batch,
     phone
   }) {
-    return apiClient.post('/auth/register', {
-      role: 'student',
+    return apiClient.post('/auth/register/student', {
       name,
       email,
       password,
@@ -44,24 +43,9 @@ export const authApi = {
     });
   },
 
-  // Teacher Self-Registration (Strictly 'faculty' role, no privileged selection)
-  async registerTeacher({
-    name,
-    email,
-    password,
-    designation,
-    specialization,
-    phone
-  }) {
-    return apiClient.post('/auth/register', {
-      role: 'faculty',
-      name,
-      email,
-      password,
-      designation: designation || 'Assistant Professor',
-      specialization: specialization || 'Computer Science & Engineering',
-      phone
-    });
+  // Faculty Self-Registration - Permanently disabled per institutional security policy
+  async registerTeacher() {
+    throw new Error('Faculty self-registration is disabled. Faculty accounts are appointed and provisioned exclusively by Department Administration via Master Data.');
   },
 
   // Fetch current authenticated user session

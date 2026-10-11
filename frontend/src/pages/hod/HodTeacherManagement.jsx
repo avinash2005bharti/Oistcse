@@ -37,6 +37,8 @@ export default function HodTeacherManagement() {
   const [showTgModal, setShowTgModal] = useState(false);
   const [tgTeacher, setTgTeacher] = useState(null);
   const [tgSectionId, setTgSectionId] = useState('');
+  const [tgSemester, setTgSemester] = useState(5);
+  const [tgSectionLetter, setTgSectionLetter] = useState('A');
   const [tgAcademicYear, setTgAcademicYear] = useState('2026-27');
   const [appointingTg, setAppointingTg] = useState(false);
 
@@ -268,28 +270,43 @@ export default function HodTeacherManagement() {
       section.id === target?.tgSectionId ||
       (section.name === target?.tgSection && (!target?.tgSemester || section.semester === target.tgSemester))
     );
-    setTgSectionId(currentSection?.id || sections[0]?.id || '');
-    setTgAcademicYear(currentSection?.academicYear || '2026-27');
+    const resolvedSection = currentSection || sections[0];
+    const initialSem = resolvedSection?.semester || 5;
+    const initialSec = resolvedSection?.name || 'A';
+    setTgSemester(initialSem);
+    setTgSectionLetter(initialSec);
+    setTgSectionId(resolvedSection?.id || '');
+    setTgAcademicYear(resolvedSection?.academicYear || '2026-27');
     setShowTgModal(true);
   };
 
   // Submit TG Appointment
   const handleAppointTgSubmit = async (e) => {
     e.preventDefault();
-    if (!tgTeacher || !selectedTgSection) return;
+    if (!tgTeacher) return;
+
+    const targetSection = selectedTgSection || sections.find(
+      (s) => Number(s.semester) === Number(tgSemester) && s.name === tgSectionLetter
+    ) || {
+      id: tgSectionId || 'sec-auto',
+      name: tgSectionLetter,
+      semester: tgSemester,
+      academicYear: tgAcademicYear
+    };
+
     setAppointingTg(true);
 
     try {
       const res = await teacherApi.appointTg(tgTeacher.id, {
-        sectionId: selectedTgSection.id,
-        section: selectedTgSection.name,
-        semester: selectedTgSection.semester,
+        sectionId: targetSection.id,
+        section: targetSection.name || tgSectionLetter,
+        semester: targetSection.semester || tgSemester,
         academicYear: tgAcademicYear
       });
 
       addToast(
         'TG Appointed Successfully',
-        res.message || `${tgTeacher.name} has been appointed as Tutor Guardian for Semester ${selectedTgSection.semester}, Section ${selectedTgSection.name}.`,
+        res.message || `${tgTeacher.name} has been appointed as Tutor Guardian for Semester ${targetSection.semester || tgSemester}, Section ${targetSection.name || tgSectionLetter}.`,
         'success'
       );
       setShowTgModal(false);
@@ -526,9 +543,8 @@ export default function HodTeacherManagement() {
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`btn text-xs py-1.5 px-3.5 rounded-full ${
-                        activeTab === tab.id ? 'btn-primary font-bold' : 'btn-outline text-slate-600'
-                      }`}
+                      className={`btn text-xs py-1.5 px-3.5 rounded-full ${activeTab === tab.id ? 'btn-primary font-bold' : 'btn-outline text-slate-600'
+                        }`}
                     >
                       {tab.label}
                     </button>
@@ -842,27 +858,65 @@ export default function HodTeacherManagement() {
 
             {/* Section & Year Selection */}
             <form onSubmit={handleAppointTgSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label className="form-label" style={{ fontSize: '12px', fontWeight: 700 }}>
-                  Assigned Student Section *
-                </label>
-                <select
-                  value={tgSectionId}
-                  onChange={(e) => setTgSectionId(e.target.value)}
-                  className="input-field"
-                  required
-                >
-                  <option value="">Select a section</option>
-                  {sections.map((section) => (
-                    <option key={section.id} value={section.id}>
-                      Semester {section.semester} • Section {section.name} ({section.academicYear})
-                    </option>
-                  ))}
-                </select>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
-                  All students in the selected semester and section will report directly to this Tutor Guardian.
-                </span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 700 }}>
+                    Select Semester *
+                  </label>
+                  <select
+                    value={tgSemester}
+                    onChange={(e) => {
+                      const newSem = Number(e.target.value);
+                      setTgSemester(newSem);
+                      const matching = sections.find((s) => Number(s.semester) === newSem && s.name === tgSectionLetter) ||
+                        sections.find((s) => Number(s.semester) === newSem);
+                      if (matching) {
+                        setTgSectionId(matching.id);
+                        setTgSectionLetter(matching.name);
+                        setTgAcademicYear(matching.academicYear || tgAcademicYear);
+                      }
+                    }}
+                    className="input-field"
+                    required
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                      <option key={sem} value={sem}>
+                        Semester {sem}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 700 }}>
+                    Select Section *
+                  </label>
+                  <select
+                    value={tgSectionLetter}
+                    onChange={(e) => {
+                      const newLetter = e.target.value;
+                      setTgSectionLetter(newLetter);
+                      const matching = sections.find((s) => Number(s.semester) === Number(tgSemester) && s.name === newLetter);
+                      if (matching) {
+                        setTgSectionId(matching.id);
+                        setTgAcademicYear(matching.academicYear || tgAcademicYear);
+                      }
+                    }}
+                    className="input-field"
+                    required
+                  >
+                    {['A', 'B', 'C', 'D'].map((sec) => (
+                      <option key={sec} value={sec}>
+                        Section {sec}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '-0.35rem' }}>
+                All students in Semester {tgSemester}, Section {tgSectionLetter} will report directly to this Tutor Guardian.
+              </span>
 
               <div>
                 <label className="form-label" style={{ fontSize: '12px', fontWeight: 700 }}>

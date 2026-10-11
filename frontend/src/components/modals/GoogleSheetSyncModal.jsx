@@ -29,51 +29,83 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) {
+      throw new Error("Active spreadsheet not found. Ensure this script is created via Extensions > Apps Script in your Google Sheet.");
+    }
+    var sheet = ss.getActiveSheet() || ss.getSheets()[0];
     
     // Auto-create styled header row if empty sheet
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
-        "Timestamp",
-        "Request ID",
-        "Applicant Name",
-        "Roll / Enrollment",
+        "Student Name",
+        "Enrollment",
+        "Section",
+        "Periods",
+        "Time From",
+        "Time To",
+        "Date From",
+        "Date To",
+        "Number of Days",
         "Category",
-        "Dates / Duration",
-        "Reason / Subject",
         "Status",
         "Sanctioned By",
-        "Remarks / Comments"
+        "Timestamp"
       ]);
-      var headerRange = sheet.getRange(1, 1, 1, 10);
+      var headerRange = sheet.getRange(1, 1, 1, 13);
       headerRange.setFontWeight("bold");
-      headerRange.setBackground("#059669");
+      headerRange.setBackground("#1E40AF");
       headerRange.setFontColor("#FFFFFF");
       sheet.setFrozenRows(1);
     }
     
-    var data = JSON.parse(e.postData.contents);
+    var data = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        data = JSON.parse(e.postData.contents);
+      } catch (parseErr) {
+        data = {};
+      }
+    } else if (e && e.parameter) {
+      data = e.parameter;
+    }
+    
+    // Fast response for connection tests / pings
+    if (data.action === "ping" || data.test) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Successfully reached Google Sheet Webhook! Active sheet: " + sheet.getName(),
+        sheetName: sheet.getName(),
+        rows: sheet.getLastRow(),
+        timestamp: new Date().toISOString()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     var records = data.records || (data.record ? [data.record] : []);
     
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
       sheet.appendRow([
-        r.timestamp || new Date().toLocaleString(),
-        r.id || "",
         r.studentName || r.applicantName || "Student",
-        r.rollNo || "—",
+        r.enrollment || r.rollNo || "—",
+        r.section || "—",
+        r.periods || "—",
+        r.timeFrom || "—",
+        r.timeTo || "—",
+        r.dateFrom || "—",
+        r.dateTo || "—",
+        r.numberOfDays || 1,
         r.category || "Academic Clearance",
-        r.dates || "—",
-        r.reason || "—",
         r.status || "APPROVED",
         r.approvedBy || "HOD CSE",
-        r.remarks || ""
+        r.timestamp || new Date().toLocaleString()
       ]);
     }
     
     return ContentService.createTextOutput(JSON.stringify({
       status: "success",
       count: records.length,
+      totalRows: sheet.getLastRow(),
       updatedAt: new Date().toISOString()
     })).setMimeType(ContentService.MimeType.JSON);
     
@@ -606,22 +638,50 @@ export default function GoogleSheetSyncModal({ onClose, data, totalApprovedCount
 
                 {/* Test Feedback Pill */}
                 {testResult && (
-                  <div
-                    style={{
-                      marginTop: '0.5rem',
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: 'var(--radius-lg)',
-                      backgroundColor: testResult.success ? '#ECFDF5' : '#FEF2F2',
-                      border: testResult.success ? '1px solid #A7F3D0' : '1px solid #FECACA',
-                      color: testResult.success ? '#065F46' : '#991B1B',
-                      fontSize: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    {testResult.success ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
-                    <span>{testResult.message}</span>
+                  <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div
+                      style={{
+                        padding: '0.75rem 1rem',
+                        borderRadius: 'var(--radius-lg)',
+                        backgroundColor: testResult.success ? '#ECFDF5' : '#FEF2F2',
+                        border: testResult.success ? '1px solid #A7F3D0' : '1px solid #FECACA',
+                        color: testResult.success ? '#065F46' : '#991B1B',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                        lineHeight: 1.5
+                      }}
+                    >
+                      {testResult.success ? <CheckCircle2 size={16} className="shrink-0 mt-0.5" /> : <AlertCircle size={16} className="shrink-0 mt-0.5" />}
+                      <span style={{ fontWeight: 500 }}>{testResult.message}</span>
+                    </div>
+
+                    {!testResult.success && testResult.message?.includes('doPost') && (
+                      <div
+                        style={{
+                          padding: '0.85rem 1rem',
+                          borderRadius: 'var(--radius-lg)',
+                          backgroundColor: '#FFFBEB',
+                          border: '1px solid #FDE68A',
+                          color: '#92400E',
+                          fontSize: '12px',
+                          lineHeight: 1.5
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                          <Zap size={14} className="text-amber-600" />
+                          <span>Quick 3-Click Fix in Google Apps Script:</span>
+                        </div>
+                        <ol style={{ margin: '4px 0 0 1.25rem', padding: 0, fontSize: '11.5px', color: '#78350F' }}>
+                          <li>In your Google Sheet, open <strong>Extensions &gt; Apps Script</strong> and press <code>Ctrl + S</code> to save code.</li>
+                          <li>Click <strong>Deploy</strong> at top right &gt; <strong>Manage deployments</strong>.</li>
+                          <li>Click the <strong>✏️ Edit (pencil)</strong> icon next to the active Web app.</li>
+                          <li>Under <strong>Version</strong>, select <strong>"New version"</strong> (this is required whenever script is changed).</li>
+                          <li>Ensure <strong>Who has access</strong> is set to <strong>"Anyone"</strong>, then click <strong>Deploy</strong>.</li>
+                        </ol>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -825,10 +885,10 @@ export default function GoogleSheetSyncModal({ onClose, data, totalApprovedCount
               {/* 4 Step Visual Steps */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                 {[
-                  { step: '1', title: 'Open Apps Script', desc: 'In your Google Sheet, click Extensions > Apps Script in the menu bar.' },
-                  { step: '2', title: 'Paste the Script', desc: 'Clear any default boilerplate and paste the template code below.' },
-                  { step: '3', title: 'Deploy Web App', desc: 'Click Deploy > New deployment > Web app > Access: "Anyone" > Deploy.' },
-                  { step: '4', title: 'Paste Webhook URL', desc: 'Copy the generated Web app URL and paste it into Webhook URL in Settings.' }
+                  { step: '1', title: 'Open Apps Script', desc: 'In your Google Sheet, click Extensions > Apps Script in the top menu.' },
+                  { step: '2', title: 'Paste & Save Code', desc: 'Clear any default code, paste the template below, and press Ctrl + S.' },
+                  { step: '3', title: 'Deploy New Version', desc: 'Click Deploy > Manage deployments > ✏️ Edit > Version: "New version" > Access: "Anyone" > Deploy.' },
+                  { step: '4', title: 'Paste Webhook URL', desc: 'Copy the Web app URL (ending in /exec) and paste it into Webhook URL in Settings.' }
                 ].map((s) => (
                   <div
                     key={s.step}

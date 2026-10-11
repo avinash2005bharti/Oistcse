@@ -39,16 +39,28 @@ export default function TgRequests() {
             </p>
           </div>
 
-          <button
-            onClick={() => openModal('googleSheet')}
-            className="btn btn-outline text-xs py-2 px-3 flex items-center gap-1.5"
-            style={{ borderColor: '#10B981', color: '#047857', backgroundColor: '#ECFDF5' }}
-            id="btn-tg-requests-google-sheet"
-          >
-            <FileSpreadsheet size={14} className="text-emerald-600" />
-            <span>Live Google Sheet</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => openModal('attendanceLeaveReports', { role: 'tg', initialTab: activeTab === 'leave' ? 'leaves' : 'attendance' })}
+              className="btn btn-outline text-xs py-2 px-3 flex items-center gap-1.5"
+              style={{ borderColor: '#3B82F6', color: '#1D4ED8', backgroundColor: '#EFF6FF', fontWeight: 700 }}
+              id="btn-tg-requests-reports-ledger"
+            >
+              <FileSpreadsheet size={14} className="text-blue-600" />
+              <span>Clearances Ledger &amp; Reports</span>
+            </button>
+
+            <button
+              onClick={() => openModal('googleSheet')}
+              className="btn btn-outline text-xs py-2 px-3 flex items-center gap-1.5"
+              style={{ borderColor: '#10B981', color: '#047857', backgroundColor: '#ECFDF5' }}
+              id="btn-tg-requests-google-sheet"
+            >
+              <FileSpreadsheet size={14} className="text-emerald-600" />
+              <span>Live Google Sheet</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+            </button>
+          </div>
         </div>
 
         {/* Request Category Tabs */}

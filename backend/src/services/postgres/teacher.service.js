@@ -125,31 +125,37 @@ class PostgresTeacherService {
       });
     }
 
-    // 3. Create or update MentorGroup
-    const existingGroup = await prisma.mentorGroup.findFirst({
-      where: { teacherId }
-    });
+    // 3. Create or update MentorGroup (if model exists)
+    let mentorGroup = null;
+    if (prisma.mentorGroup) {
+      try {
+        const existingGroup = await prisma.mentorGroup.findFirst({
+          where: { teacherId }
+        });
 
-    const teacherFullName = `${teacher.firstName} ${teacher.lastName || ''}`.trim();
-    let mentorGroup;
+        const teacherFullName = `${teacher.firstName} ${teacher.lastName || ''}`.trim();
 
-    if (!existingGroup) {
-      mentorGroup = await prisma.mentorGroup.create({
-        data: {
-          teacherId,
-          name: `TG Group - Section ${section} (${teacherFullName})`,
-          departmentId: teacher.departmentId,
-          academicYear
+        if (!existingGroup) {
+          mentorGroup = await prisma.mentorGroup.create({
+            data: {
+              teacherId,
+              name: `TG Group - Section ${section} (${teacherFullName})`,
+              departmentId: teacher.departmentId,
+              academicYear
+            }
+          });
+        } else {
+          mentorGroup = await prisma.mentorGroup.update({
+            where: { id: existingGroup.id },
+            data: {
+              name: `TG Group - Section ${section} (${teacherFullName})`,
+              academicYear
+            }
+          });
         }
-      });
-    } else {
-      mentorGroup = await prisma.mentorGroup.update({
-        where: { id: existingGroup.id },
-        data: {
-          name: `TG Group - Section ${section} (${teacherFullName})`,
-          academicYear
-        }
-      });
+      } catch (mgErr) {
+        // Safe to ignore legacy mentorGroup errors
+      }
     }
 
     // 4. Create Notification
@@ -200,9 +206,11 @@ class PostgresTeacherService {
       });
     }
 
-    await prisma.mentorGroup.deleteMany({
-      where: { teacherId }
-    });
+    if (prisma.mentorGroup) {
+      await prisma.mentorGroup.deleteMany({
+        where: { teacherId }
+      });
+    }
 
     return {
       teacher: {

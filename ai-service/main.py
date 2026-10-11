@@ -65,6 +65,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount Role-Based AI Agent Routers (implementation.md)
+try:
+    from app.api.health import router as role_health_router
+    from app.api.chat import router as role_chat_router
+    from app.api.confirm import router as role_confirm_router
+    app.include_router(role_health_router)
+    app.include_router(role_chat_router)
+    app.include_router(role_confirm_router)
+except Exception as e:
+    logger.warning(f"[Main Router Mount Note] {e}")
+
 # ----------------- Request Models -----------------
 class AuthenticatedAgentRequest(BaseModel):
     user_id: Optional[str] = None
@@ -326,6 +337,11 @@ def chat_endpoint(req: ChatRequest, internal_secret: Optional[str] = Header(defa
             content=query_text
         )
 
+        # Resolve attached file ID
+        resolved_file_id = req.file_id
+        if not resolved_file_id and isinstance(req.attachment, dict):
+            resolved_file_id = req.attachment.get("id") or req.attachment.get("_id") or req.attachment.get("file_id")
+
         # Execute autonomous agent orchestration
         result = central_orchestrator.orchestrate(
             prompt=query_text,
@@ -335,7 +351,8 @@ def chat_endpoint(req: ChatRequest, internal_secret: Optional[str] = Header(defa
             target_agent=target_agent,
             context_history=req.context_history,
             user_context=verified_user,
-            file_id=req.file_id or (req.attachment.get("id") if req.attachment else None)
+            file_id=resolved_file_id,
+            attachment=req.attachment
         )
 
         return result

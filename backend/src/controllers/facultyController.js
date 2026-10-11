@@ -298,7 +298,7 @@ exports.updateFaculty = async (req, res) => {
 exports.appointTg = async (req, res) => {
   try {
     const { id } = req.params;
-    const { sectionId, section, sectionName, academicYear } = req.body;
+    const { sectionId, section, sectionName, semester, academicYear } = req.body;
 
     const teacher = await prisma.teacher.findUnique({
       where: { id },
@@ -310,35 +310,80 @@ exports.appointTg = async (req, res) => {
     }
 
     const targetSectionName = (section || sectionName || '').trim().toUpperCase();
-    const targetSections = sectionId
-      ? [await prisma.section.findFirst({
-          where: { id: sectionId, departmentId: teacher.departmentId },
-          include: { semester: true }
-        })].filter(Boolean)
-      : await prisma.section.findMany({
-          where: {
-          departmentId: teacher.departmentId,
-          name: targetSectionName
-          },
-          include: { semester: true }
-        });
+    const targetSemesterNum = semester ? Number(semester) : null;
+    const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
-    if (!targetSectionName && !sectionId) {
-      return res.status(400).json({ success: false, message: 'A semester-specific section is required.' });
-    }
-    if (targetSections.length === 0) {
-      return res.status(404).json({ success: false, message: 'The selected section was not found in this faculty member’s department.' });
-    }
-    if (targetSections.length > 1) {
-      return res.status(400).json({
-        success: false,
-        message: 'Multiple sections share that name. Select a semester-specific section and retry.'
+    let targetSection = null;
+
+    // 1. Try finding by valid UUID sectionId
+    if (sectionId && isUuid(sectionId)) {
+      targetSection = await prisma.section.findFirst({
+        where: { id: sectionId, departmentId: teacher.departmentId },
+        include: { semester: true }
       });
     }
 
-    const targetSection = targetSections[0];
-    if (targetSectionName && targetSection.name.toUpperCase() !== targetSectionName) {
-      return res.status(400).json({ success: false, message: 'The selected section ID does not match the section name.' });
+    // 2. If not found or no valid sectionId, find by semester number & section name
+    if (!targetSection && targetSectionName) {
+      if (targetSemesterNum) {
+        targetSection = await prisma.section.findFirst({
+          where: {
+            departmentId: teacher.departmentId,
+            name: targetSectionName,
+            semester: { semesterNumber: targetSemesterNum }
+          },
+          include: { semester: true }
+        });
+      }
+
+      // If still not found, search by name only within the department
+      if (!targetSection) {
+        targetSection = await prisma.section.findFirst({
+          where: {
+            departmentId: teacher.departmentId,
+            name: targetSectionName
+          },
+          include: { semester: true }
+        });
+      }
+    }
+
+    // 3. If section still doesn't exist, create semester & section on-the-fly
+    if (!targetSection && targetSectionName) {
+      const semNum = targetSemesterNum || 5;
+      const year = academicYear || '2026-27';
+
+      let semRecord = await prisma.semester.findFirst({
+        where: {
+          departmentId: teacher.departmentId,
+          semesterNumber: semNum
+        }
+      });
+
+      if (!semRecord) {
+        semRecord = await prisma.semester.create({
+          data: {
+            departmentId: teacher.departmentId,
+            semesterNumber: semNum,
+            academicYear: year
+          }
+        });
+      }
+
+      targetSection = await prisma.section.create({
+        data: {
+          name: targetSectionName,
+          semesterId: semRecord.id,
+          departmentId: teacher.departmentId,
+          academicYear: year,
+          capacity: 60
+        },
+        include: { semester: true }
+      });
+    }
+
+    if (!targetSection) {
+      return res.status(400).json({ success: false, message: 'A semester-specific section is required.' });
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -382,24 +427,6 @@ exports.appointTg = async (req, res) => {
         }
       }
 
-      const groupName = `TG Group - Semester ${targetSection.semester?.semesterNumber || '—'} Section ${targetSection.name} (${teacher.firstName} ${teacher.lastName || ''})`;
-      const existingGroup = await tx.mentorGroup.findFirst({ where: { teacherId: id } });
-      if (existingGroup) {
-        await tx.mentorGroup.update({
-          where: { id: existingGroup.id },
-          data: { name: groupName, academicYear: academicYear || targetSection.academicYear }
-        });
-      } else {
-        await tx.mentorGroup.create({
-          data: {
-            teacherId: id,
-            name: groupName,
-            departmentId: teacher.departmentId,
-            academicYear: academicYear || targetSection.academicYear
-          }
-        });
-      }
-
       return tx.teacher.findUnique({
         where: { id },
         include: {
@@ -420,6 +447,7 @@ exports.appointTg = async (req, res) => {
       faculty: formatTeacher(updated)
     });
   } catch (error) {
+    logger.error('Error appointing TG:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

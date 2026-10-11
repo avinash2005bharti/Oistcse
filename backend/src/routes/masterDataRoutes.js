@@ -42,7 +42,13 @@ router.get('/export/:type', verifyToken, (req, res, next) => {
   if (type === 'students') return masterDataController.exportStudents(req, res, next);
   if (type === 'subjects') return masterDataController.exportSubjects(req, res, next);
   if (type === 'classrooms') return masterDataController.exportClassrooms(req, res, next);
+  if (type === 'timetables' || type === 'timetable') return masterDataController.exportTimetable(req, res, next);
   return res.status(400).json({ success: false, message: `Invalid export type: ${type}` });
+});
+
+// 2.1 Sample Data Format & Template Download (.xlsx & .csv)
+router.get('/sample-template/:type', optionalAuth, (req, res, next) => {
+  return masterDataController.getSampleTemplate(req, res, next);
 });
 
 // 3. Timetables Master Data List & Delete

@@ -156,7 +156,7 @@ exports.chat = async (req, res) => {
     const conversationId = req.body.conversation_id || req.body.conversationId || `conv-${Date.now()}`;
     const targetAgent = req.body.agent || null;
     const attachment = req.body.attachment || null;
-    const fileId = req.body.file_id || req.body.fileId || attachment?.id || null;
+    const fileId = req.body.file_id || req.body.fileId || attachment?.id || attachment?._id || attachment?.file_id || null;
 
     if (!promptText) {
       return res.status(400).json({ success: false, message: 'A prompt or message string is required.' });
@@ -576,7 +576,8 @@ exports.chatStream = async (req, res) => {
           user: req.user,
           conversation_id: req.body.conversation_id || req.body.conversationId || `conv-${Date.now()}`,
           context_history: [],
-          file_id: req.body.file_id || req.body.fileId || null
+          file_id: req.body.file_id || req.body.fileId || req.body.attachment?.id || req.body.attachment?._id || req.body.attachment?.file_id || null,
+          attachment: req.body.attachment || null
         }, {
           timeout: 25000,
           headers: {

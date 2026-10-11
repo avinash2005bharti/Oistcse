@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Users,
   GraduationCap,
@@ -18,16 +19,24 @@ import {
   FileSpreadsheet,
   Check,
   RefreshCw,
-  UserCheck
+  UserCheck,
+  Eye,
+  FileText,
+  Sparkles
 } from 'lucide-react';
 import { masterDataApi } from '../../api/masterDataApi';
 import { classroomApi } from '../../api/classroomApi';
 import { academicApi } from '../../api/academicApi';
 import { useERP } from '../../context/ERPContext';
+import ImportSampleFormatViewer from '../../components/common/ImportSampleFormatViewer';
+import { downloadSampleCsvFile } from '../../utils/importSampleFormats';
 
 export default function MasterDataManagement() {
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const urlAction = searchParams.get('action');
   const { currentRole } = useERP();
-  const [activeTab, setActiveTab] = useState('teachers'); // teachers | students | subjects | classrooms | timetables
+  const [activeTab, setActiveTab] = useState(urlTab || 'teachers'); // teachers | students | subjects | classrooms | timetables
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
@@ -45,17 +54,31 @@ export default function MasterDataManagement() {
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(Boolean(urlAction));
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
 
   // Import state
+  const [importModalView, setImportModalView] = useState(urlAction === 'sample' ? 'sample' : 'upload'); // 'upload' | 'sample'
   const [importFile, setImportFile] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importPreview, setImportPreview] = useState(null); // { totalRows, validCount, invalidCount, preview, errors }
 
   // Form state
   const [formData, setFormData] = useState({});
+
+  useEffect(() => {
+    if (urlTab) {
+      setActiveTab(urlTab);
+    }
+    if (urlAction === 'import') {
+      setImportModalView('upload');
+      setIsImportModalOpen(true);
+    } else if (urlAction === 'sample') {
+      setImportModalView('sample');
+      setIsImportModalOpen(true);
+    }
+  }, [urlTab, urlAction]);
 
   useEffect(() => {
     loadData();
@@ -261,12 +284,34 @@ export default function MasterDataManagement() {
           </button>
 
           <button
-            onClick={() => { setImportFile(null); setImportPreview(null); setIsImportModalOpen(true); }}
+            onClick={() => { setImportFile(null); setImportPreview(null); setImportModalView('upload'); setIsImportModalOpen(true); }}
             className="btn btn-outline-primary"
             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600, padding: '8px 16px', borderRadius: '8px', background: '#F8FAFC' }}
+            id="btn-open-bulk-import"
           >
             <UploadCloud size={16} />
             <span>Import Excel/CSV</span>
+          </button>
+
+          <button
+            onClick={() => { setImportModalView('sample'); setIsImportModalOpen(true); }}
+            className="btn"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontWeight: 600,
+              padding: '8px 16px',
+              borderRadius: '8px',
+              backgroundColor: '#EEF2FF',
+              color: '#4F46E5',
+              border: '1px solid #C7D2FE'
+            }}
+            id="btn-open-sample-format"
+            title="View spreadsheet format specifications and download templates"
+          >
+            <Eye size={16} />
+            <span>View Sample Format</span>
           </button>
 
           <button
@@ -703,17 +748,19 @@ export default function MasterDataManagement() {
             style={{
               backgroundColor: '#FFFFFF',
               borderRadius: '20px',
-              maxWidth: '820px',
+              maxWidth: importModalView === 'sample' ? '960px' : '820px',
               width: '100%',
-              maxHeight: '90vh',
+              maxHeight: '92vh',
               display: 'flex',
               flexDirection: 'column',
               boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.28)',
               border: '1px solid #E2E8F0',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              transition: 'max-width 0.25s ease'
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Modal Header */}
             <div
               style={{
                 display: 'flex',
@@ -748,114 +795,292 @@ export default function MasterDataManagement() {
                   </span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsImportModalOpen(false)}
-                style={{
-                  border: 'none',
-                  background: 'none',
-                  cursor: 'pointer',
-                  color: '#94A3B8',
-                  padding: '4px'
-                }}
-              >
-                <X size={20} />
-              </button>
-            </div>
 
-            <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1 }}>
-              {/* Step 1: Upload File */}
-              <div
-                className="mb-4 text-center p-4 border border-2 border-dashed rounded-3"
-                style={{ backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' }}
-              >
-                <UploadCloud size={42} style={{ color: '#2563EB', margin: '0 auto 8px auto' }} />
-                <h6 style={{ fontWeight: 700, color: '#0F172A' }}>Choose Excel (.xlsx) or CSV file to import</h6>
-                <p className="text-muted small mb-3">Ensure your spreadsheet contains headers matching the required fields</p>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleFileChange}
-                  className="form-control"
-                  style={{ maxWidth: '420px', margin: '0 auto' }}
-                />
-                {importFile && (
-                  <div className="mt-3">
-                    <span className="badge me-2" style={{ backgroundColor: '#2563EB', color: '#FFFFFF', padding: '6px 12px' }}>Selected: {importFile.name}</span>
-                    <button
-                      onClick={handlePreviewImport}
-                      disabled={importLoading}
-                      className="btn btn-sm btn-primary"
-                      style={{ fontWeight: 600, padding: '5px 14px' }}
-                    >
-                      {importLoading ? 'Validating...' : 'Preview & Validate'}
-                    </button>
-                  </div>
-                )}
+              {/* Header Right Actions (Matches User Sketch) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setImportModalView(importModalView === 'sample' ? 'upload' : 'sample')}
+                  className="btn btn-sm"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: importModalView === 'sample' ? '#EEF2FF' : '#F1F5F9',
+                    color: importModalView === 'sample' ? '#4F46E5' : '#334155',
+                    border: importModalView === 'sample' ? '1.5px solid #6366F1' : '1px solid #CBD5E1',
+                    borderRadius: '8px',
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: importModalView === 'sample' ? '0 1px 3px rgba(99, 102, 241, 0.2)' : 'none',
+                    transition: 'all 0.15s ease'
+                  }}
+                  id="btn-sample-data-format-header"
+                  title="View required column headers, accepted aliases, rules and sample records"
+                >
+                  <Eye size={14} color={importModalView === 'sample' ? '#4F46E5' : '#475569'} />
+                  <span>{importModalView === 'sample' ? 'Back to File Upload' : 'View Sample Data Format'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsImportModalOpen(false)}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: '#94A3B8',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title="Close modal"
+                >
+                  <X size={20} />
+                </button>
               </div>
-
-              {/* Step 2: Dry Run Validation Results */}
-              {importPreview && (
-                <div>
-                  <div className="d-flex gap-3 mb-3">
-                    <div className="card p-3 flex-fill text-center border-success bg-success-subtle">
-                      <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.validCount || 0}</div>
-                      <div style={{ fontSize: '12px' }}>Valid Records</div>
-                    </div>
-                    <div className="card p-3 flex-fill text-center border-danger bg-danger-subtle">
-                      <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.invalidCount || 0}</div>
-                      <div style={{ fontSize: '12px' }}>Duplicates / Errors</div>
-                    </div>
-                    <div className="card p-3 flex-fill text-center border-secondary bg-light">
-                      <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.totalRows || 0}</div>
-                      <div style={{ fontSize: '12px' }}>Total Rows Read</div>
-                    </div>
-                  </div>
-
-                  {/* Validation Errors List */}
-                  {importPreview.errors && importPreview.errors.length > 0 && (
-                    <div className="alert alert-warning mb-3" style={{ maxHeight: '160px', overflowY: 'auto' }}>
-                      <div className="fw-bold mb-1">Validation Warnings / Detected Duplicates:</div>
-                      <ul className="mb-0 ps-3 small">
-                        {importPreview.errors.map((err, i) => (
-                          <li key={i}>{typeof err === 'string' ? err : `Row ${err.row}: ${err.error}`}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Preview Table */}
-                  {importPreview.preview && importPreview.preview.length > 0 && (
-                    <div className="table-responsive border rounded" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                      <table className="table table-sm table-striped mb-0 small">
-                        <thead>
-                          <tr>
-                            {Object.keys(importPreview.preview[0] || {}).slice(0, 5).map((col) => (
-                              <th key={col}>{col}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {importPreview.preview.slice(0, 5).map((row, idx) => (
-                            <tr key={idx}>
-                              {Object.values(row).slice(0, 5).map((v, cIdx) => (
-                                <td key={cIdx}>{String(v)}</td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
+            {/* In-Modal Segmented View Switcher */}
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'flex-end',
+                gap: '8px',
+                padding: '8px 1.5rem',
+                backgroundColor: '#FFFFFF',
+                borderBottom: '1px solid #F1F5F9'
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setImportModalView('upload')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  fontWeight: importModalView === 'upload' ? 700 : 500,
+                  color: importModalView === 'upload' ? '#2563EB' : '#64748B',
+                  backgroundColor: importModalView === 'upload' ? '#EFF6FF' : 'transparent',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                <UploadCloud size={14} />
+                <span>Upload & Validate File</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setImportModalView('sample')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  fontWeight: importModalView === 'sample' ? 700 : 500,
+                  color: importModalView === 'sample' ? '#4F46E5' : '#64748B',
+                  backgroundColor: importModalView === 'sample' ? '#EEF2FF' : 'transparent',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                <FileSpreadsheet size={14} />
+                <span>View Sample Data Format & Template</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1 }}>
+              {importModalView === 'sample' ? (
+                <ImportSampleFormatViewer
+                  currentType={activeTab}
+                  onSelectType={(newType) => setActiveTab(newType)}
+                  onBackToUpload={() => setImportModalView('upload')}
+                />
+              ) : (
+                <>
+                  {/* Step 1: Upload File */}
+                  <div
+                    className="mb-4 text-center p-4 border border-2 border-dashed rounded-3"
+                    style={{ backgroundColor: '#F8FAFC', borderColor: '#CBD5E1' }}
+                  >
+                    <UploadCloud size={42} style={{ color: '#2563EB', margin: '0 auto 8px auto' }} />
+                    <h6 style={{ fontWeight: 700, color: '#0F172A' }}>Choose Excel (.xlsx) or CSV file to import</h6>
+                    <p className="text-muted small mb-3">Ensure your spreadsheet contains headers matching the required fields</p>
+                    <input
+                      type="file"
+                      accept=".xlsx, .xls, .csv"
+                      onChange={handleFileChange}
+                      className="form-control"
+                      style={{ maxWidth: '420px', margin: '0 auto' }}
+                    />
+                    {importFile && (
+                      <div className="mt-3">
+                        <span className="badge me-2" style={{ backgroundColor: '#2563EB', color: '#FFFFFF', padding: '6px 12px' }}>Selected: {importFile.name}</span>
+                        <button
+                          onClick={handlePreviewImport}
+                          disabled={importLoading}
+                          className="btn btn-sm btn-primary"
+                          style={{ fontWeight: 600, padding: '5px 14px' }}
+                        >
+                          {importLoading ? 'Validating...' : 'Preview & Validate'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Helper Prompt to View Sample Format or Download Template */}
+                    <div
+                      style={{
+                        marginTop: '16px',
+                        paddingTop: '12px',
+                        borderTop: '1px dashed #CBD5E1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <span style={{ fontSize: '12px', color: '#64748B' }}>Unsure about spreadsheet columns?</span>
+                      <button
+                        type="button"
+                        onClick={() => setImportModalView('sample')}
+                        style={{
+                          border: 'none',
+                          background: 'none',
+                          color: '#2563EB',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          textDecoration: 'underline',
+                          cursor: 'pointer',
+                          padding: 0
+                        }}
+                      >
+                        View Sample Data Format
+                      </button>
+                      <span style={{ color: '#CBD5E1' }}>•</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await masterDataApi.downloadSampleTemplate(activeTab, 'xlsx');
+                          } catch (e) {
+                            downloadSampleCsvFile(activeTab);
+                          }
+                        }}
+                        style={{
+                          border: 'none',
+                          background: 'none',
+                          color: '#059669',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer',
+                          padding: 0
+                        }}
+                      >
+                        <Download size={13} />
+                        Download Excel Template (.xlsx)
+                      </button>
+                      <span style={{ color: '#CBD5E1' }}>•</span>
+                      <button
+                        type="button"
+                        onClick={() => downloadSampleCsvFile(activeTab)}
+                        style={{
+                          border: 'none',
+                          background: 'none',
+                          color: '#0284C7',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer',
+                          padding: 0
+                        }}
+                      >
+                        <Download size={13} />
+                        Download .CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Dry Run Validation Results */}
+                  {importPreview && (
+                    <div>
+                      <div className="d-flex gap-3 mb-3">
+                        <div className="card p-3 flex-fill text-center border-success bg-success-subtle">
+                          <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.validCount || 0}</div>
+                          <div style={{ fontSize: '12px' }}>Valid Records</div>
+                        </div>
+                        <div className="card p-3 flex-fill text-center border-danger bg-danger-subtle">
+                          <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.invalidCount || 0}</div>
+                          <div style={{ fontSize: '12px' }}>Duplicates / Errors</div>
+                        </div>
+                        <div className="card p-3 flex-fill text-center border-secondary bg-light">
+                          <div style={{ fontSize: '20px', fontWeight: 800 }}>{importPreview.totalRows || 0}</div>
+                          <div style={{ fontSize: '12px' }}>Total Rows Read</div>
+                        </div>
+                      </div>
+
+                      {/* Validation Errors List */}
+                      {importPreview.errors && importPreview.errors.length > 0 && (
+                        <div className="alert alert-warning mb-3" style={{ maxHeight: '160px', overflowY: 'auto' }}>
+                          <div className="fw-bold mb-1">Validation Warnings / Detected Duplicates:</div>
+                          <ul className="mb-0 ps-3 small">
+                            {importPreview.errors.map((err, i) => (
+                              <li key={i}>{typeof err === 'string' ? err : `Row ${err.row}: ${err.error}`}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Preview Table */}
+                      {importPreview.preview && importPreview.preview.length > 0 && (
+                        <div className="table-responsive border rounded" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                          <table className="table table-sm table-striped mb-0 small">
+                            <thead>
+                              <tr>
+                                {Object.keys(importPreview.preview[0] || {}).slice(0, 5).map((col) => (
+                                  <th key={col}>{col}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.preview.slice(0, 5).map((row, idx) => (
+                                <tr key={idx}>
+                                  {Object.values(row).slice(0, 5).map((v, cIdx) => (
+                                    <td key={cIdx}>{String(v)}</td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
                 gap: '0.75rem',
                 padding: '1rem 1.5rem',
                 borderTop: '1px solid #F1F5F9',
@@ -868,27 +1093,49 @@ export default function MasterDataManagement() {
                 onClick={() => setIsImportModalOpen(false)}
                 style={{ fontSize: '12px', padding: '0.45rem 1rem' }}
               >
-                Cancel
+                Close
               </button>
-              <button
-                type="button"
-                className="btn btn-success"
-                onClick={handleConfirmImport}
-                disabled={!importPreview || importLoading || !importPreview.validCount}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                  padding: '0.45rem 1.25rem',
-                  backgroundColor: '#059669',
-                  borderColor: '#059669'
-                }}
-              >
-                <Check size={16} />
-                <span>Confirm & Import {importPreview?.validCount || 0} Records</span>
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {importModalView === 'sample' ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setImportModalView('upload')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontWeight: 600,
+                      fontSize: '12px',
+                      padding: '0.45rem 1.25rem'
+                    }}
+                  >
+                    <UploadCloud size={16} />
+                    <span>Upload & Import Records</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-success"
+                    onClick={handleConfirmImport}
+                    disabled={!importPreview || importLoading || !importPreview.validCount}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontWeight: 600,
+                      fontSize: '12px',
+                      padding: '0.45rem 1.25rem',
+                      backgroundColor: '#059669',
+                      borderColor: '#059669'
+                    }}
+                  >
+                    <Check size={16} />
+                    <span>Confirm & Import {importPreview?.validCount || 0} Records</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

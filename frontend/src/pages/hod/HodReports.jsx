@@ -78,7 +78,7 @@ export default function HodReports() {
               <Users size={20} />
             </div>
             <div>
-              <span className="text-[11px] text-slate-500 block">Active Student Cohorts</span>
+              <span className="text-[11px] text-slate-500 block">Active Enrolled Students</span>
               <div className="text-2xl font-extrabold text-slate-900">{totalStudents} Students</div>
               <span className="text-[11px] text-blue-600">Across {sections.length || 6} CSE Sections</span>
             </div>

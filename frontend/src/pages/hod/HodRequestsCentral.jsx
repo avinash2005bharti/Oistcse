@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
 import { useERP } from '../../context/ERPContext';
 import RequestCard from '../../components/RequestCard';
+import HodRequestCard from '../../components/HodRequestCard';
 import GoogleSheetSyncModal from '../../components/modals/GoogleSheetSyncModal';
+import AttendanceLeaveReportsModal from '../../components/modals/AttendanceLeaveReportsModal';
 import { PageHeader, Badge, Button, Card, EmptyState } from '../../components/common';
+import {
+  exportLedgerToExcel,
+  exportLedgerToCSV,
+  printLedgerReport
+} from '../../utils/reportExportUtils';
 import {
   Compass,
   Filter,
@@ -15,7 +22,8 @@ import {
   Printer,
   CheckSquare,
   Radio,
-  Sparkles
+  Sparkles,
+  Layers
 } from 'lucide-react';
 
 const getApprovedPeriodDetails = (request) => {
@@ -53,7 +61,9 @@ export default function HodRequestsCentral() {
   } = useERP();
 
   const [filter, setFilter] = useState('all');
+  const [selectedSemester, setSelectedSemester] = useState('ALL');
   const [showGoogleSheetModal, setShowGoogleSheetModal] = useState(false);
+  const [showReportsModal, setShowReportsModal] = useState(false);
   const [periodAdjustments, setPeriodAdjustments] = useState({});
 
   const allRequests = [
@@ -84,6 +94,8 @@ export default function HodRequestsCentral() {
   const allAccepted = allRequests.filter((r) => isAccepted(r.status));
 
   const filtered = allRequests.filter((r) => {
+    const semMatches = selectedSemester === 'ALL' || String(r.semester) === String(selectedSemester);
+    if (!semMatches) return false;
     if (filter === 'pending') return isAwaitingHod(r.status);
     if (filter === 'bypass') return isPendingTg(r.status);
     if (filter === 'leaves') return r.type === 'leave_request';
@@ -92,197 +104,51 @@ export default function HodRequestsCentral() {
     return true;
   });
 
-  // Multi-format Approved Clearance Downloads
-  const handleExportCsv = (list = allAccepted) => {
-    if (!list || list.length === 0) {
-      addToast?.('No Records', 'There are no approved requests to export.', 'warning');
+  const getExportList = (customList) => {
+    let list = customList || allAccepted;
+    if (selectedSemester !== 'ALL') {
+      list = list.filter((r) => String(r.semester) === String(selectedSemester));
+    }
+    return list;
+  };
+
+  // Multi-format Official Clearances Ledger Downloads per Image Architecture
+  const handleExportCsv = (list) => {
+    const targetList = getExportList(list);
+    if (!targetList || targetList.length === 0) {
+      addToast?.('No Records', 'There are no approved requests to export for the selected semester.', 'warning');
       return;
     }
-    const headers = ['Request ID', 'Student / Faculty', 'Roll / Enrollment', 'Request Category', 'Dates / Duration', 'Periods Approved', 'Time Interval', 'Reason / Subject', 'Status', 'Date Approved'];
-    const rows = list.map((r) => {
-      const { count, timing } = getApprovedPeriodDetails(r);
-      return [
-        `"${r.id || ''}"`,
-        `"${r.studentName || r.applicantName || 'Student'}"`,
-        `"${r.rollNo || r.enrollmentNo || '—'}"`,
-        `"${r.type === 'attendance_consideration' ? 'Attendance Consideration' : r.type === 'leave_request' ? `Student Leave (${r.leaveType || 'General'})` : 'Attendance Dispute Query'}"`,
-        `"${r.dateRangeLabel || r.dates || r.date || r.startDate || '—'}"`,
-        `"${count}"`,
-        `"${String(timing).replace(/"/g, '""')}"`,
-        `"${(r.reason || r.title || '').replace(/"/g, '""')}"`,
-        `"APPROVED BY HOD"`,
-        `"${new Date(r.updatedAt || r.createdAt || Date.now()).toLocaleDateString()}"`
-      ];
+    exportLedgerToCSV({ records: targetList, semester: selectedSemester });
+    addToast?.('CSV Export Complete', `Downloaded ${targetList.length} approved record(s) as CSV.`, 'success');
+  };
+
+  const handleExportExcel = (list) => {
+    const targetList = getExportList(list);
+    if (!targetList || targetList.length === 0) {
+      addToast?.('No Records', 'There are no approved requests to export for the selected semester.', 'warning');
+      return;
+    }
+    exportLedgerToExcel({
+      records: targetList,
+      semester: selectedSemester,
+      authorizedBy: 'Head of Department (HOD CSE)'
     });
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `HOD_Cleared_Requests_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    addToast?.('CSV Export Complete', `Downloaded ${list.length} approved record(s) as CSV.`, 'success');
+    addToast?.('Excel Export Complete', `Downloaded ${targetList.length} approved record(s) as Excel file.`, 'success');
   };
 
-  const handleExportExcel = (list = allAccepted) => {
-    if (!list || list.length === 0) {
-      addToast?.('No Records', 'There are no approved requests to export.', 'warning');
+  const handlePrintReport = (list) => {
+    const targetList = getExportList(list);
+    if (!targetList || targetList.length === 0) {
+      addToast?.('No Records', 'There are no approved requests to print for the selected semester.', 'warning');
       return;
     }
-    const tableRows = list.map((r, i) => {
-      const { count, timing } = getApprovedPeriodDetails(r);
-      return `
-      <tr>
-        <td style="text-align: center;">${i + 1}</td>
-        <td>#${r.id || ''}</td>
-        <td><strong>${r.studentName || r.applicantName || 'Student'}</strong></td>
-        <td>${r.rollNo || r.enrollmentNo || '—'}</td>
-        <td>${r.type === 'attendance_consideration' ? 'Attendance Consideration' : r.type === 'leave_request' ? `Student Leave (${r.leaveType || 'General'})` : 'Attendance Dispute'}</td>
-        <td>${r.dateRangeLabel || r.dates || r.date || r.startDate || '—'}</td>
-        <td>${count}</td>
-        <td>${timing}</td>
-        <td>${r.reason || r.title || ''}</td>
-        <td style="color: #047857; font-weight: bold; text-align: center;">APPROVED</td>
-        <td>${new Date(r.updatedAt || r.createdAt || Date.now()).toLocaleDateString()}</td>
-      </tr>
-    `;
-    }).join('');
-
-    const excelTemplate = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta charset="utf-8">
-        <style>
-          table { border-collapse: collapse; width: 100%; font-family: Calibri, sans-serif; font-size: 11pt; }
-          th { background-color: #1E40AF; color: #FFFFFF; font-weight: bold; border: 1px solid #CBD5E1; padding: 8px 12px; }
-          td { border: 1px solid #CBD5E1; padding: 6px 10px; }
-          tr:nth-child(even) { background-color: #F8FAFC; }
-        </style>
-      </head>
-      <body>
-        <h2>Oriental Institute of Science & Technology (OIST) - Dept. of CSE</h2>
-        <h3>Official Approved Clearances & Sanctioned Requests Ledger</h3>
-        <p>Generated on: ${new Date().toLocaleString()} | Authorized by: Head of Department (HOD CSE)</p>
-        <table border="1">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Request ID</th>
-              <th>Applicant Name</th>
-              <th>Roll / Enrollment</th>
-              <th>Category</th>
-              <th>Period / Dates</th>
-              <th>Periods Approved</th>
-              <th>Time Interval</th>
-              <th>Reason / Particulars</th>
-              <th>Status</th>
-              <th>Date Sanctioned</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
-    const blob = new Blob([excelTemplate], { type: 'application/vnd.ms-excel;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `HOD_Cleared_Requests_${new Date().toISOString().split('T')[0]}.xls`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    addToast?.('Excel Export Complete', `Downloaded ${list.length} approved record(s) as Excel file.`, 'success');
-  };
-
-  const handlePrintReport = (list = allAccepted) => {
-    if (!list || list.length === 0) {
-      addToast?.('No Records', 'There are no approved requests to print.', 'warning');
-      return;
-    }
-    const printWindow = window.open('', '_blank', 'width=950,height=750');
-    if (!printWindow) return;
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Official Department Clearances Ledger - OIST CSE</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 2rem; color: #1e293b; }
-            .header { text-align: center; border-bottom: 2px solid #1e40af; padding-bottom: 1rem; margin-bottom: 1.5rem; }
-            .logo-title { font-size: 18px; font-weight: 800; color: #1e40af; text-transform: uppercase; margin: 0; }
-            .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
-            .meta { display: flex; justify-content: space-between; margin-bottom: 1rem; font-size: 12px; font-weight: 600; color: #475569; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            th { background-color: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-weight: 700; }
-            td { border: 1px solid #cbd5e1; padding: 8px; }
-            tr:nth-child(even) { background-color: #f8fafc; }
-            .status { color: #047857; font-weight: 700; }
-            .footer { margin-top: 3.5rem; display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; }
-            .seal { border-top: 1px dashed #94a3b8; width: 220px; text-align: center; padding-top: 8px; }
-            @media print { button { display: none; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1 class="logo-title">Oriental Institute of Science & Technology (OIST)</h1>
-            <div class="sub">Department of Computer Science & Engineering • CampusFlow ERP</div>
-            <h2 style="font-size: 16px; margin: 12px 0 0 0; color: #0f172a;">Official Approved Clearances & Sanctioned Requests Ledger</h2>
-          </div>
-          <div class="meta">
-            <span>Date: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</span>
-            <span>Authorized by: Head of Department (HOD CSE)</span>
-            <span>Total Sanctioned: ${list.length} record(s)</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Applicant</th>
-                <th>Roll / ID</th>
-                <th>Category</th>
-                <th>Duration / Dates</th>
-                <th>Reason / Subject</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${list.map((r, i) => {
-                const { count, timing } = getApprovedPeriodDetails(r);
-                return `
-                <tr>
-                  <td>${i + 1}</td>
-                  <td><strong>${r.studentName || r.applicantName || 'Student'}</strong></td>
-                  <td>${r.rollNo || r.enrollmentNo || '—'}</td>
-                  <td>${r.type === 'attendance_consideration' ? 'Attendance Consideration' : r.type === 'leave_request' ? `Leave (${r.leaveType || 'General'})` : 'Dispute Correction'}</td>
-                  <td>${r.dateRangeLabel || r.dates || r.date || r.startDate || '—'}</td>
-                  <td>${count}</td>
-                  <td>${timing}</td>
-                  <td>${r.reason || r.title || ''}</td>
-                  <td class="status">APPROVED</td>
-                </tr>
-              `;
-              }).join('')}
-            </tbody>
-          </table>
-          <div class="footer">
-            <div class="seal">Department ERP Coordinator</div>
-            <div class="seal">Head of Department (HOD CSE)<br><span style="font-size: 10px; color: #64748b;">(Digital Authentication Signature)</span></div>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 250);
+    printLedgerReport({
+      records: targetList,
+      semester: selectedSemester,
+      authorizedBy: 'Head of Department (HOD CSE)'
+    });
+    addToast?.('Print Report Opened', `Prepared official print / PDF report for ${targetList.length} record(s).`, 'info');
   };
 
   const handleApproveAction = async (req, customPeriods) => {
@@ -318,6 +184,35 @@ export default function HodRequestsCentral() {
           badge={<Badge variant="purple" size="sm">HOD Digital Sign-off</Badge>}
           actions={
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Semester Filter Selector (Per Diagram Architecture) */}
+              <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-300 rounded-lg px-2.5 py-1 text-xs">
+                <span className="font-bold text-slate-700">Semester:</span>
+                <select
+                  value={selectedSemester}
+                  onChange={(e) => setSelectedSemester(e.target.value)}
+                  className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-semibold text-primary outline-none cursor-pointer"
+                  id="hod-select-semester-filter"
+                >
+                  <option value="ALL">All Semesters</option>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                    <option key={s} value={s}>
+                      Semester {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* View Full Clearances Ledger Modal */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowReportsModal(true)}
+                id="btn-requests-view-ledger-modal"
+                leftIcon={<Layers size={15} className="text-indigo-600" />}
+              >
+                Clearances Ledger
+              </Button>
+
               {/* Google Live Sheet Button */}
               <Button
                 variant="outline"
@@ -463,103 +358,40 @@ export default function HodRequestsCentral() {
             filtered.map((req) => {
               const normStatus = String(req.status || '').toLowerCase();
               const isActionable = !['completed', 'approved', 'rejected', 'approved_by_hod'].includes(normStatus);
-              const isConsideration = req.type === 'attendance_consideration';
-              const currentPeriods = periodAdjustments[req.id] ?? req.periodsCount ?? 4;
+              const currentPeriods =
+                periodAdjustments[req.id] ??
+                req.approvedPeriodsCount ??
+                req.periodsCount ??
+                (Array.isArray(req.selectedPeriods)
+                  ? req.selectedPeriods.length
+                  : Array.isArray(req.periods)
+                    ? req.periods.length
+                    : 3);
 
               return (
-                <div key={req.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                  <RequestCard
-                    request={{
-                      ...req,
-                      periodsCount: currentPeriods,
-                      approvedPeriodsCount: req.approvedPeriodsCount || (normStatus === 'approved' ? currentPeriods : undefined)
-                    }}
-                    showActions={isActionable}
-                    role="hod"
-                    onApprove={() => handleApproveAction(req, currentPeriods)}
-                    onReject={() => {
-                      if (req.type === 'attendance_consideration') {
-                        hodRejectAttendanceConsideration(req.id);
-                      } else if (req.type === 'leave_request' || req.leaveType) {
-                        hodRejectLeave(req.id);
-                      } else if (req.type === 'attendance_query') {
-                        hodRejectAttendanceQuery(req.id);
-                      }
-                    }}
-                  />
-
-                  {/* HOD Consideration Authority Stepper */}
-                  {isConsideration && isActionable && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '0.65rem 1rem',
-                        backgroundColor: '#FAF5FF',
-                        border: '1px solid #E9D5FF',
-                        borderRadius: 'var(--radius-xl)',
-                        flexWrap: 'wrap',
-                        gap: '0.65rem'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                        <Sparkles size={16} className="text-purple-600 shrink-0" />
-                        <div>
-                          <span style={{ fontWeight: 800, color: '#581C87' }}>HOD Consideration Control: </span>
-                          <span style={{ color: '#7E22CE' }}>
-                            Increase or decrease sanctioned periods to be credited for this activity
-                          </span>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '11px', color: '#6B21A8', fontWeight: 600 }}>Sanctioned Periods:</span>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: '8px', border: '1px solid #D8B4FE', padding: '2px' }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (currentPeriods > 1) {
-                                setPeriodAdjustments((prev) => ({ ...prev, [req.id]: currentPeriods - 1 }));
-                              }
-                            }}
-                            className="btn btn-xs"
-                            style={{ width: '26px', height: '26px', padding: 0, fontWeight: 800, color: '#7E22CE', borderRadius: '6px' }}
-                            title="Decrease period count"
-                          >
-                            –
-                          </button>
-                          <span
-                            style={{
-                              minWidth: '42px',
-                              textAlign: 'center',
-                              fontWeight: 800,
-                              fontSize: '12.5px',
-                              color: '#581C87',
-                              padding: '0 4px'
-                            }}
-                          >
-                            {currentPeriods}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (currentPeriods < 14) {
-                                setPeriodAdjustments((prev) => ({ ...prev, [req.id]: currentPeriods + 1 }));
-                              }
-                            }}
-                            className="btn btn-xs"
-                            style={{ width: '26px', height: '26px', padding: 0, fontWeight: 800, color: '#7E22CE', borderRadius: '6px' }}
-                            title="Increase period count"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span style={{ fontSize: '10.5px', color: '#7E22CE', fontWeight: 600 }}>Period{currentPeriods > 1 ? 's' : ''}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <HodRequestCard
+                  key={req.id}
+                  request={{
+                    ...req,
+                    periodsCount: currentPeriods,
+                    approvedPeriodsCount: req.approvedPeriodsCount || (normStatus === 'approved' ? currentPeriods : undefined)
+                  }}
+                  currentPeriods={currentPeriods}
+                  onPeriodChange={(newCount) => {
+                    setPeriodAdjustments((prev) => ({ ...prev, [req.id]: newCount }));
+                  }}
+                  showActions={isActionable}
+                  onApprove={() => handleApproveAction(req, currentPeriods)}
+                  onReject={() => {
+                    if (req.type === 'attendance_consideration') {
+                      hodRejectAttendanceConsideration(req.id);
+                    } else if (req.type === 'leave_request' || req.leaveType) {
+                      hodRejectLeave(req.id);
+                    } else if (req.type === 'attendance_query') {
+                      hodRejectAttendanceQuery(req.id);
+                    }
+                  }}
+                />
               );
             })
           )}
@@ -571,6 +403,16 @@ export default function HodRequestsCentral() {
         <GoogleSheetSyncModal
           onClose={() => setShowGoogleSheetModal(false)}
           totalApprovedCount={allAccepted.length}
+        />
+      )}
+
+      {/* Official Clearances Ledger Modal */}
+      {showReportsModal && (
+        <AttendanceLeaveReportsModal
+          isOpen={showReportsModal}
+          onClose={() => setShowReportsModal(false)}
+          initialSemester={selectedSemester}
+          userRole="hod"
         />
       )}
     </div>

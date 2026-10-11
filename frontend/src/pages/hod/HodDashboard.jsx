@@ -1,8 +1,10 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useERP } from '../../context/ERPContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { dashboardApi } from '../../api/dashboardApi';
 import { studentApi } from '../../api/studentApi';
+import { requestApi } from '../../api/requestApi';
+import AttendanceLeaveReportsModal from '../../components/modals/AttendanceLeaveReportsModal';
 import {
   Users,
   GraduationCap,
@@ -25,7 +27,12 @@ import {
   ExternalLink,
   Search,
   Phone,
-  Mail
+  Mail,
+  FileSpreadsheet,
+  Download,
+  ChevronDown,
+  Filter,
+  RefreshCw
 } from 'lucide-react';
 
 export default function HodDashboard() {
@@ -41,6 +48,35 @@ export default function HodDashboard() {
   const [showSectionModal, setShowSectionModal] = useState(false);
   const [sectionSearchTerm, setSectionSearchTerm] = useState('');
   const [selectedSemester, setSelectedSemester] = useState(5); // Default to Sem 5 per Image 4
+
+  // Academic Year & Academic Calendar State (Image Item 2 - unclipped selector & calendar)
+  const [academicYear, setAcademicYear] = useState('2025-26');
+  const [showAcademicYearDropdown, setShowAcademicYearDropdown] = useState(false);
+  const [showAcademicYearModal, setShowAcademicYearModal] = useState(false);
+  const [calendarActiveTab, setCalendarActiveTab] = useState('ODD'); // 'ODD' | 'EVEN'
+  const academicYearBtnRef = useRef(null);
+  const [dropdownCoords, setDropdownCoords] = useState({ top: 180, right: 24 });
+
+  const handleToggleAcademicYearDropdown = () => {
+    if (!showAcademicYearDropdown && academicYearBtnRef.current) {
+      const rect = academicYearBtnRef.current.getBoundingClientRect();
+      setDropdownCoords({
+        top: Math.round(rect.bottom + 8),
+        right: Math.max(16, Math.round(window.innerWidth - rect.right))
+      });
+    }
+    setShowAcademicYearDropdown((prev) => !prev);
+  };
+
+  // Consideration & Planned Leave Reports Modal State (Image Item 1)
+  const [isConsiderationModalOpen, setIsConsiderationModalOpen] = useState(false);
+  const [considerationTab, setConsiderationTab] = useState('attendance'); // 'attendance' | 'leaves'
+  const [considerationSemester, setConsiderationSemester] = useState('ALL');
+  const [considerationSection, setConsiderationSection] = useState('ALL');
+  const [considerationSearch, setConsiderationSearch] = useState('');
+  const [considerationList, setConsiderationList] = useState([]);
+  const [leaveList, setLeaveList] = useState([]);
+  const [loadingReports, setLoadingReports] = useState(false);
 
   // Move to Next Semester (Promotion / Shift) States
   const [showMoveSemModal, setShowMoveSemModal] = useState(false);
@@ -76,6 +112,139 @@ export default function HodDashboard() {
   useEffect(() => {
     fetchHodData();
   }, []);
+
+  // Fetch Consideration & Leave Records (Image Item 1)
+  const fetchConsiderationReports = async () => {
+    setLoadingReports(true);
+    try {
+      const params = {};
+      if (considerationSemester !== 'ALL') params.semester = considerationSemester;
+      if (considerationSection !== 'ALL') params.section = considerationSection;
+
+      const res = await requestApi.getAllRequests(params);
+      const considerations = res?.attendanceRequests || res?.considerationRequests || [];
+      const leaves = res?.leaveRequests || [];
+      setConsiderationList(considerations);
+      setLeaveList(leaves);
+    } catch (err) {
+      console.warn('Could not load consideration reports:', err);
+    } finally {
+      setLoadingReports(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isConsiderationModalOpen) {
+      fetchConsiderationReports();
+    }
+  }, [isConsiderationModalOpen, considerationSemester, considerationSection]);
+
+  const filteredConsiderations = useMemo(() => {
+    return considerationList.filter((item) => {
+      const semMatches = considerationSemester === 'ALL' || String(item.semester) === String(considerationSemester);
+      const secVal = typeof item.section === 'object' && item.section !== null ? item.section.name : (item.section || 'A');
+      const secMatches = considerationSection === 'ALL' || secVal.toUpperCase() === considerationSection.toUpperCase();
+      const q = considerationSearch.toLowerCase().trim();
+      const queryMatches =
+        !q ||
+        (item.studentName || '').toLowerCase().includes(q) ||
+        (item.enrollmentNo || item.rollNo || '').toLowerCase().includes(q);
+      return semMatches && secMatches && queryMatches;
+    });
+  }, [considerationList, considerationSemester, considerationSection, considerationSearch]);
+
+  const filteredLeaves = useMemo(() => {
+    return leaveList.filter((item) => {
+      const semMatches = considerationSemester === 'ALL' || String(item.semester) === String(considerationSemester);
+      const secVal = typeof item.section === 'object' && item.section !== null ? item.section.name : (item.section || 'A');
+      const secMatches = considerationSection === 'ALL' || secVal.toUpperCase() === considerationSection.toUpperCase();
+      const q = considerationSearch.toLowerCase().trim();
+      const queryMatches =
+        !q ||
+        (item.studentName || '').toLowerCase().includes(q) ||
+        (item.enrollmentNo || item.rollNo || '').toLowerCase().includes(q) ||
+        (item.reason || '').toLowerCase().includes(q);
+      return semMatches && secMatches && queryMatches;
+    });
+  }, [leaveList, considerationSemester, considerationSection, considerationSearch]);
+
+  const handleOpenLiveGoogleSheet = () => {
+    window.open('https://docs.google.com/spreadsheets', '_blank', 'noopener,noreferrer');
+    addToast('Live Spreadsheet', 'Opening Google Live Sheet in browser tab.', 'info');
+  };
+
+  const handleExportSpreadsheet = () => {
+    const isAtt = considerationTab === 'attendance';
+    const rows = isAtt ? filteredConsiderations : filteredLeaves;
+
+    let csvContent = isAtt
+      ? 'Student Name,Enrollment No,Semester,Section,Number of Periods,Time From - To,Date From,Date To,Status\n'
+      : 'Student Name,Enrollment No,Semester,Section,Periods / Total Days,Time From - To,Date From,Date To,Reason,Status\n';
+
+    rows.forEach((r) => {
+      if (isAtt) {
+        csvContent += `"${r.studentName || 'Student'}","${r.enrollmentNo || r.rollNo || ''}","Sem ${r.semester || 5}","${r.section || 'A'}","${r.periodsCount || 1}","${r.periodsTiming || '09:00 - 10:00'}","${r.startDate ? new Date(r.startDate).toLocaleDateString() : ''}","${r.endDate ? new Date(r.endDate).toLocaleDateString() : ''}","${r.status || 'APPROVED'}"\n`;
+      } else {
+        csvContent += `"${r.studentName || 'Student'}","${r.enrollmentNo || r.rollNo || ''}","Sem ${r.semester || 5}","${r.section || 'A'}","${r.totalDays || 1} Days","${r.periodsTiming || 'Full Day'}","${r.startDate ? new Date(r.startDate).toLocaleDateString() : ''}","${r.endDate ? new Date(r.endDate).toLocaleDateString() : ''}","${(r.reason || '').replace(/"/g, '""')}","${r.status || 'APPROVED'}"\n`;
+      }
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${isAtt ? 'hod_attendance_consideration_report' : 'hod_student_leave_list'}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addToast('Report Exported', 'Spreadsheet CSV downloaded successfully.', 'success');
+  };
+
+  const handleDownloadAcademicCalendar = () => {
+    const calendarText = `RAJIV GANDHI PROUDYOGIKI VISHWAVIDYALAYA, BHOPAL
+ACADEMIC CALENDAR - SESSION ${academicYear}
+DEPARTMENT OF COMPUTER SCIENCE & ENGINEERING
+ORIENTAL INSTITUTE OF SCIENCE & TECHNOLOGY (OIST), BHOPAL
+
+============================================================
+ODD SEMESTER (I, III, V, VII SEMESTER): JULY - DECEMBER
+============================================================
+1. Commencement of Academic Session: 15 July 2025
+2. Orientation & Mentor-Mentee Allocation: 18 - 22 July 2025
+3. Mid-Semester Test - I (MST-1): 15 - 20 September 2025
+4. Submission of MST-1 Marks & Shortage Review: 26 September 2025
+5. Mid-Semester Test - II (MST-2): 10 - 15 November 2025
+6. Remedial Classes & Doubt Clearing Sessions: 24 - 29 November 2025
+7. Practical & Viva-Voce Examinations: 01 - 06 December 2025
+8. End Semester RGPV Theory Examinations: 10 - 30 December 2025
+9. Winter Break / Inter-Semester Recess: 31 December - 10 January 2026
+
+============================================================
+EVEN SEMESTER (II, IV, VI, VIII SEMESTER): JANUARY - JUNE
+============================================================
+1. Commencement of Academic Session: 12 January 2026
+2. Annual Techno-Cultural Fest (TechAcme): 20 - 25 February 2026
+3. Mid-Semester Test - I (MST-1): 16 - 21 March 2026
+4. Submission of MST-1 Marks & Parent Interaction: 28 March 2026
+5. Mid-Semester Test - II (MST-2): 20 - 25 April 2026
+6. Attendance Freezing & Admit Card Generation: 05 May 2026
+7. Practical & Project Defense: 15 - 22 May 2026
+8. University Theory Examinations: 25 May - 15 June 2026
+9. Summer Internships & Industry Training: 16 June - 14 July 2026
+
+Issued by: Head of Department (CSE), OIST Bhopal
+Approved by: Principal / Director, OIST Bhopal`;
+
+    const blob = new Blob([calendarText], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `RGPV_OIST_Academic_Calendar_${academicYear}.txt`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addToast('Academic Calendar', `Downloaded official Academic Calendar for ${academicYear}.`, 'success');
+  };
 
   // Time & Greeting Helpers
   const hour = currentDateTime.getHours();
@@ -332,12 +501,40 @@ export default function HodDashboard() {
             Here's what's happening in your {d.departmentCode || 'CSE'} department today.
           </p>
 
-          <div className="hod-time-pill">
-            <Calendar size={14} style={{ color: '#2563EB' }} />
-            <span>{formattedDate}</span>
-            <span style={{ color: '#CBD5E1' }}>|</span>
-            <Clock size={14} style={{ color: '#059669' }} />
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formattedTime}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div className="hod-time-pill">
+              <Calendar size={14} style={{ color: '#2563EB' }} />
+              <span>{formattedDate}</span>
+              <span style={{ color: '#CBD5E1' }}>|</span>
+              <Clock size={14} style={{ color: '#059669' }} />
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formattedTime}</span>
+            </div>
+
+            {/* View Consideration Button (Image Item 1) */}
+            <button
+              type="button"
+              id="hod-view-consideration-btn"
+              onClick={() => setIsConsiderationModalOpen(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 700,
+                backgroundColor: '#ECFDF5',
+                color: '#065F46',
+                border: '1px solid #A7F3D0',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)'
+              }}
+              title="View student attendance consideration & leave requests (same as teacher dashboard)"
+            >
+              <FileSpreadsheet size={14} style={{ color: '#059669' }} />
+              <span>View Consideration</span>
+            </button>
           </div>
         </div>
 
@@ -355,9 +552,44 @@ export default function HodDashboard() {
             <p className="hod-campus-tag">— OIST {d.departmentCode || 'CSE'}</p>
           </div>
 
-          <div className="hod-academic-year-pill">
-            <CalendarDays size={14} />
-            <span>Academic Year: 2025-26</span>
+          {/* Academic Year Selector Pill Button (Image Item 2 - onclick select academic year / calendar) */}
+          <div style={{ position: 'relative', zIndex: 10 }}>
+            <button
+              ref={academicYearBtnRef}
+              type="button"
+              id="hod-academic-year-pill-btn"
+              onClick={handleToggleAcademicYearDropdown}
+              className="hod-academic-year-pill"
+              style={{
+                cursor: 'pointer',
+                border: '1px solid rgba(255, 255, 255, 0.4)',
+                backgroundColor: 'rgba(15, 23, 42, 0.85)',
+                color: '#FFFFFF',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '7px',
+                padding: '6px 14px',
+                borderRadius: '9999px',
+                fontSize: '12px',
+                fontWeight: 700,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+                backdropFilter: 'blur(8px)',
+                userSelect: 'none',
+                transition: 'all 0.15s ease'
+              }}
+              title="Click to select Academic Year or view Academic Calendar"
+            >
+              <CalendarDays size={14} style={{ color: '#60A5FA' }} />
+              <span>Academic Year: {academicYear}</span>
+              <ChevronDown
+                size={13}
+                style={{
+                  color: '#94A3B8',
+                  transform: showAcademicYearDropdown ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.2s ease'
+                }}
+              />
+            </button>
           </div>
         </div>
       </div>
@@ -1849,6 +2081,425 @@ export default function HodDashboard() {
           </div>
         </div>
       )}
+
+      {/* 6. Unclipped Fixed Dropdown for Academic Year (Image Item 2) */}
+      {showAcademicYearDropdown && (
+        <>
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 1190,
+              backgroundColor: 'transparent'
+            }}
+            onClick={() => setShowAcademicYearDropdown(false)}
+          />
+          <div
+            id="hod-academic-year-popover"
+            style={{
+              position: 'fixed',
+              top: `${dropdownCoords.top}px`,
+              right: `${dropdownCoords.right}px`,
+              backgroundColor: '#FFFFFF',
+              borderRadius: '14px',
+              boxShadow: '0 16px 36px -4px rgba(15, 23, 42, 0.28), 0 6px 16px -2px rgba(15, 23, 42, 0.12)',
+              border: '1px solid #CBD5E1',
+              padding: '8px',
+              minWidth: '240px',
+              zIndex: 1200,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '3px'
+            }}
+          >
+            <div
+              style={{
+                padding: '6px 10px',
+                fontSize: '11px',
+                fontWeight: 800,
+                color: '#64748B',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              }}
+            >
+              Select Academic Year
+            </div>
+
+            {['2026-27', '2025-26', '2024-25', '2023-24'].map((year) => {
+              const isSelected = academicYear === year;
+              return (
+                <button
+                  key={year}
+                  type="button"
+                  onClick={() => {
+                    setAcademicYear(year);
+                    setShowAcademicYearDropdown(false);
+                    addToast('Academic Year Updated', `Active departmental session switched to ${year}.`, 'success');
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: isSelected ? '#EFF6FF' : 'transparent',
+                    color: isSelected ? '#1D4ED8' : '#1E293B',
+                    fontWeight: isSelected ? 700 : 500,
+                    fontSize: '13px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) e.currentTarget.style.backgroundColor = '#F8FAFC';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    <Calendar size={13} style={{ color: isSelected ? '#2563EB' : '#94A3B8' }} />
+                    <span>Academic Year: {year}</span>
+                  </span>
+                  {isSelected && <CheckCircle2 size={15} style={{ color: '#2563EB' }} />}
+                </button>
+              );
+            })}
+
+            <div style={{ height: '1px', backgroundColor: '#E2E8F0', margin: '4px 0' }} />
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAcademicYearDropdown(false);
+                setShowAcademicYearModal(true);
+              }}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: '#F0FDF4',
+                color: '#15803D',
+                fontWeight: 700,
+                fontSize: '12px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#DCFCE7';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#F0FDF4';
+              }}
+            >
+              <CalendarDays size={14} style={{ color: '#16A34A' }} />
+              <span>View Full Academic Calendar</span>
+              <ArrowRight size={12} style={{ marginLeft: 'auto' }} />
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 7. Academic Calendar & Session Settings Modal */}
+      {showAcademicYearModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1250,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(6px)',
+            padding: '1.25rem'
+          }}
+          onClick={() => setShowAcademicYearModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '20px',
+              maxWidth: '860px',
+              width: '100%',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.28)',
+              border: '1px solid #CBD5E1',
+              overflow: 'hidden'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '1.25rem 1.5rem',
+                borderBottom: '1px solid #F1F5F9',
+                backgroundColor: '#F8FAFC'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '12px',
+                    backgroundColor: '#EFF6FF',
+                    color: '#2563EB',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <CalendarDays size={20} />
+                </div>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '16.5px', fontWeight: 800, color: '#0F172A' }}>
+                    Academic Calendar & Session Settings
+                  </h4>
+                  <span style={{ fontSize: '12px', color: '#64748B' }}>
+                    Department of Computer Science & Engineering • Academic Session {academicYear}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAcademicYearModal(false)}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94A3B8' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '1.25rem 1.5rem', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Session Selector Cards */}
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, color: '#475569', display: 'block', marginBottom: '8px' }}>
+                  Select Department Academic Session:
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+                  {[
+                    { year: '2026-27', label: 'Upcoming Session' },
+                    { year: '2025-26', label: 'Current Active' },
+                    { year: '2024-25', label: 'Previous Year' },
+                    { year: '2023-24', label: 'Archived' }
+                  ].map((item) => {
+                    const isSelected = academicYear === item.year;
+                    return (
+                      <button
+                        key={item.year}
+                        type="button"
+                        onClick={() => {
+                          setAcademicYear(item.year);
+                          addToast('Session Switched', `Active session updated to ${item.year}.`, 'info');
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '10px',
+                          border: `1.5px solid ${isSelected ? '#2563EB' : '#E2E8F0'}`,
+                          backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '2px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 800, color: isSelected ? '#1D4ED8' : '#0F172A' }}>
+                            {item.year}
+                          </span>
+                          {isSelected && <CheckCircle2 size={14} style={{ color: '#2563EB' }} />}
+                        </div>
+                        <span style={{ fontSize: '10.5px', color: isSelected ? '#2563EB' : '#64748B' }}>
+                          {item.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Semester Timelines Tabs */}
+              <div style={{ border: '1px solid #E2E8F0', borderRadius: '14px', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid #E2E8F0', backgroundColor: '#F8FAFC' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarActiveTab('ODD')}
+                    style={{
+                      flex: 1,
+                      padding: '10px',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      border: 'none',
+                      borderBottom: calendarActiveTab === 'ODD' ? '2px solid #2563EB' : 'none',
+                      backgroundColor: calendarActiveTab === 'ODD' ? '#FFFFFF' : 'transparent',
+                      color: calendarActiveTab === 'ODD' ? '#2563EB' : '#64748B',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Odd Semester (Sem 1, 3, 5, 7) • Jul – Dec
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarActiveTab('EVEN')}
+                    style={{
+                      flex: 1,
+                      padding: '10px',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      border: 'none',
+                      borderBottom: calendarActiveTab === 'EVEN' ? '2px solid #2563EB' : 'none',
+                      backgroundColor: calendarActiveTab === 'EVEN' ? '#FFFFFF' : 'transparent',
+                      color: calendarActiveTab === 'EVEN' ? '#2563EB' : '#64748B',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Even Semester (Sem 2, 4, 6, 8) • Jan – Jun
+                  </button>
+                </div>
+
+                <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                  {calendarActiveTab === 'ODD' ? (
+                    [
+                      { date: '15 July 2025', title: 'Commencement of Academic Session', desc: 'Classes commence for B.Tech CSE Odd Semesters (3rd, 5th, 7th Sem).', tag: 'Academic' },
+                      { date: '15 – 20 September 2025', title: 'Mid-Semester Test - I (MST-1)', desc: 'First centralized mid-term exams across all sections.', tag: 'Examination' },
+                      { date: '26 September 2025', title: 'Attendance Shortage Review & Parent Alert', desc: 'Students under 75% marked for mandatory TG parent calls.', tag: 'Compliance' },
+                      { date: '10 – 15 November 2025', title: 'Mid-Semester Test - II (MST-2)', desc: 'Second mid-term evaluations and lab assessment review.', tag: 'Examination' },
+                      { date: '24 – 29 November 2025', title: 'Remedial Classes & Term Work Submission', desc: 'Freezing of sessional and internal marks submission on portal.', tag: 'Internal Marks' },
+                      { date: '01 – 06 December 2025', title: 'Practical & Viva-Voce Exams', desc: 'External practical examinations as scheduled by RGPV.', tag: 'Practical' },
+                      { date: '10 – 30 December 2025', title: 'RGPV University Theory Examinations', desc: 'Final university theory examination window.', tag: 'University Exam' }
+                    ].map((item, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '9px 12px',
+                          borderRadius: '8px',
+                          backgroundColor: idx % 2 === 0 ? '#F8FAFC' : '#FFFFFF',
+                          border: '1px solid #F1F5F9'
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>{item.title}</span>
+                          <span style={{ fontSize: '11.5px', color: '#64748B' }}>{item.desc}</span>
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#2563EB', display: 'block' }}>{item.date}</span>
+                          <span style={{ fontSize: '10px', fontWeight: 600, color: '#059669', backgroundColor: '#ECFDF5', padding: '1px 6px', borderRadius: '4px' }}>{item.tag}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    [
+                      { date: '12 January 2026', title: 'Commencement of Classes (Even Sem)', desc: 'Classes begin for Even Semesters (2nd, 4th, 6th, 8th Sem).', tag: 'Academic' },
+                      { date: '20 – 25 February 2026', title: 'Annual Techno-Cultural Fest (TechAcme)', desc: 'College annual fest, national hackathons & coding leagues.', tag: 'Event' },
+                      { date: '16 – 21 March 2026', title: 'Mid-Semester Test - I (MST-1)', desc: 'First mid-term exam for even semester modules.', tag: 'Examination' },
+                      { date: '20 – 25 April 2026', title: 'Mid-Semester Test - II (MST-2)', desc: 'Final internal evaluation test and project progress reviews.', tag: 'Examination' },
+                      { date: '05 May 2026', title: 'Attendance Freezing & Hall Ticket Issuance', desc: 'System seals final attendance tally for semester.', tag: 'Compliance' },
+                      { date: '15 – 22 May 2026', title: 'Major / Minor Project Defense & Viva', desc: 'Final year project evaluation and practical exams.', tag: 'Practical' },
+                      { date: '25 May – 15 June 2026', title: 'RGPV University Theory Examinations', desc: 'End semester final theory examination period.', tag: 'University Exam' }
+                    ].map((item, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '9px 12px',
+                          borderRadius: '8px',
+                          backgroundColor: idx % 2 === 0 ? '#F8FAFC' : '#FFFFFF',
+                          border: '1px solid #F1F5F9'
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>{item.title}</span>
+                          <span style={{ fontSize: '11.5px', color: '#64748B' }}>{item.desc}</span>
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#2563EB', display: 'block' }}>{item.date}</span>
+                          <span style={{ fontSize: '10px', fontWeight: 600, color: '#059669', backgroundColor: '#ECFDF5', padding: '1px 6px', borderRadius: '4px' }}>{item.tag}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '1rem 1.5rem',
+                borderTop: '1px solid #F1F5F9',
+                backgroundColor: '#F8FAFC'
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleDownloadAcademicCalendar}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 16px',
+                  borderRadius: '8px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  border: '1px solid #CBD5E1',
+                  backgroundColor: '#FFFFFF',
+                  color: '#1E293B',
+                  cursor: 'pointer'
+                }}
+              >
+                <Download size={14} />
+                <span>Download Official Calendar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowAcademicYearModal(false)}
+                style={{
+                  padding: '7px 22px',
+                  borderRadius: '8px',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  backgroundColor: '#2563EB',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Consideration & Planned Leave Reports Modal (Matching Image 1 Wireframe) */}
+      <AttendanceLeaveReportsModal
+        isOpen={isConsiderationModalOpen}
+        onClose={() => setIsConsiderationModalOpen(false)}
+        userRole="hod"
+      />
     </div>
   );
 }

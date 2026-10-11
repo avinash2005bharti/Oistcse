@@ -39,7 +39,7 @@ export default function TeacherClasses() {
     <div className="page-wrapper">
       <div className="flex flex-col gap-5">
         <PageHeader
-          title="My Assigned Classes & Cohorts"
+          title="My Assigned Classes & Sections"
           description="Teaching courses, laboratory sessions, and active classroom assignments."
           badge={<Badge variant="primary" size="sm">Active Roster</Badge>}
         />
@@ -49,7 +49,7 @@ export default function TeacherClasses() {
             <EmptyState
               icon={<BookOpen size={36} className="text-slate-400" />}
               title="No Courses Assigned"
-              description="No teaching classes or laboratory cohorts assigned in current timetable."
+              description="No teaching classes or laboratory batches assigned in current timetable."
             />
           </Card>
         ) : (

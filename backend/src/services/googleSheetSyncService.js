@@ -58,6 +58,50 @@ function persistConfig() {
   }
 }
 
+function validateWebhookResponse(response) {
+  const data = response?.data;
+  if (!data) {
+    throw new Error('Google Apps Script returned an empty response.');
+  }
+
+  if (typeof data === 'string') {
+    if (data.includes('Script function not found: doPost') || data.includes('Script function not found')) {
+      throw new Error(
+        "Google Apps Script error: 'Script function not found: doPost'. Your Web App deployment is running an older/empty version. In your Google Sheet, open Extensions > Apps Script, paste the updated code, click Deploy > Manage deployments > click the Edit pencil icon > set Version to 'New version' > click Deploy."
+      );
+    }
+    if (data.includes('accounts.google.com') || data.includes('Sign in')) {
+      throw new Error(
+        "Google Apps Script access error: The Web App requires Google sign-in. In Apps Script, click Deploy > Manage deployments > Edit > set 'Who has access' to 'Anyone' (not 'Only myself')."
+      );
+    }
+    if (data.includes('<title>Error</title>') || data.includes('errorMessage')) {
+      throw new Error(
+        "Google Apps Script execution error: The script returned an HTML error. In your Google Sheet, open Extensions > Apps Script, save the code, and deploy a 'New version' under Manage deployments."
+      );
+    }
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.status === 'error') {
+        throw new Error(`Google Apps Script error: ${parsed.error || 'Unknown error'}`);
+      }
+      return parsed;
+    } catch (e) {
+      if (e.message.includes('Google Apps Script')) throw e;
+      throw new Error(`Unexpected response from Google Apps Script Webhook: ${data.slice(0, 120)}...`);
+    }
+  }
+
+  if (typeof data === 'object') {
+    if (data.status === 'error') {
+      throw new Error(`Google Apps Script error: ${data.error || 'Execution failed'}`);
+    }
+    return data;
+  }
+
+  return data;
+}
+
 class GoogleSheetSyncService {
   getConfig() {
     return { ...syncConfig };
@@ -78,23 +122,89 @@ class GoogleSheetSyncService {
 
   formatRecord(record, action = 'APPROVED') {
     const studentUser = record.student?.user || {};
-    const studentName = record.studentName || record.applicantName || studentUser.name || 'Student';
-    const rollNo = record.rollNo || record.enrollmentNo || record.student?.enrollmentNo || '—';
-    
-    let category = 'Academic Request';
-    if (record.leaveType || record.type === 'leave_request') {
+    let studentName = record.studentName || record.applicantName || studentUser.name;
+    if (!studentName && record.student) {
+      studentName = `${record.student.firstName || ''} ${record.student.lastName || ''}`.trim();
+    }
+    if (!studentName && record.teacher) {
+      studentName = `${record.teacher.firstName || ''} ${record.teacher.lastName || ''}`.trim() || 'Faculty Member';
+    }
+    studentName = studentName || 'Student';
+
+    let rollNo = record.rollNo || record.enrollmentNo || record.student?.enrollmentNo || record.student?.rollNo;
+    if (!rollNo && record.teacher) {
+      rollNo = record.teacher.employeeId || 'FACULTY';
+    }
+    rollNo = rollNo || '—';
+    const enrollment = rollNo;
+
+    const section = (typeof record.section === 'object' && record.section ? record.section.name : record.section) 
+      || record.student?.section?.name 
+      || 'A';
+
+    // Handle nested periods object if present
+    const periodsObj = typeof record.periods === 'object' && record.periods !== null ? record.periods : {};
+    const selectedPeriods = Array.isArray(record.selectedPeriods) && record.selectedPeriods.length > 0 
+      ? record.selectedPeriods 
+      : (Array.isArray(periodsObj.selectedPeriods) ? periodsObj.selectedPeriods : []);
+    const timingStr = record.periodsTiming || periodsObj.periodsTiming || '';
+    const periodsCount = record.approvedPeriodsCount || periodsObj.periodsCount;
+
+    let periods = '1 Period';
+    if (selectedPeriods.length > 0) {
+      periods = selectedPeriods.map(p => typeof p === 'object' ? (p.label || p.time || p.id) : p).join(', ');
+    } else if (timingStr) {
+      periods = timingStr;
+    } else if (periodsCount) {
+      periods = `${periodsCount} Periods`;
+    } else if (record.leaveType || record.type === 'leave_request') {
+      periods = 'All Periods';
+    }
+
+    let timeFrom = '09:00 AM';
+    let timeTo = '05:00 PM';
+    if (timingStr) {
+      const timeMatches = timingStr.match(/\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)/g);
+      if (timeMatches && timeMatches.length >= 2) {
+        timeFrom = timeMatches[0];
+        timeTo = timeMatches[timeMatches.length - 1];
+      } else if (timeMatches && timeMatches.length === 1) {
+        timeFrom = timeMatches[0];
+        timeTo = timeMatches[0];
+      }
+    } else if (record.leaveType || record.type === 'leave_request') {
+      timeFrom = 'Full Day';
+      timeTo = 'Full Day';
+    }
+
+    const startRaw = record.startDate || record.date || record.createdAt;
+    const endRaw = record.endDate || record.date || record.startDate || record.createdAt;
+    const sDate = startRaw ? new Date(startRaw) : new Date();
+    const eDate = endRaw ? new Date(endRaw) : sDate;
+
+    const dateFrom = !isNaN(sDate.getTime()) ? `${String(sDate.getDate()).padStart(2, '0')}/${String(sDate.getMonth() + 1).padStart(2, '0')}/${sDate.getFullYear()}` : '—';
+    const dateTo = !isNaN(eDate.getTime()) ? `${String(eDate.getDate()).padStart(2, '0')}/${String(eDate.getMonth() + 1).padStart(2, '0')}/${eDate.getFullYear()}` : dateFrom;
+
+    let numberOfDays = 1;
+    if (record.totalDays) {
+      numberOfDays = Number(record.totalDays);
+    } else if (!isNaN(sDate.getTime()) && !isNaN(eDate.getTime())) {
+      const diff = Math.max(0, eDate.getTime() - sDate.getTime());
+      numberOfDays = Math.max(1, Math.round(diff / (1000 * 60 * 60 * 24)) + 1);
+    }
+
+    let category = 'Academic Clearance';
+    if (record.category && record.category !== 'attendance_consideration') {
+      category = record.category;
+    } else if (record.leaveType || record.type === 'leave_request') {
       category = `Student Leave (${record.leaveType || 'General'})`;
     } else if (record.type === 'attendance_consideration' || record.category === 'attendance_consideration') {
       category = 'Attendance Consideration (OD/Duty)';
     } else if (record.type === 'attendance_query' || record.queryNote) {
-      category = `Attendance Dispute Query (${record.subjectName || record.subject || 'Session'})`;
+      category = `Attendance Dispute Query (${record.subjectName || record.subject?.name || 'Session'})`;
     }
 
-    const dates = record.dateRangeLabel 
-      || record.dates 
-      || record.date 
-      || (record.startDate ? `${new Date(record.startDate).toLocaleDateString()} to ${new Date(record.endDate || record.startDate).toLocaleDateString()}` : '—');
-
+    const dates = `${dateFrom} to ${dateTo}`;
     const reason = record.reason || record.title || record.queryNote || 'Particulars submitted by student';
     const remarks = record.hodRemarks || record.tgRemarks || record.comments || 'Sanctioned by HOD CSE via CampusFlow ERP';
 
@@ -103,6 +213,14 @@ class GoogleSheetSyncService {
       id: record.id || `REQ-${Date.now()}`,
       studentName,
       rollNo,
+      enrollment,
+      section,
+      periods,
+      timeFrom,
+      timeTo,
+      dateFrom,
+      dateTo,
+      numberOfDays,
       category,
       dates,
       reason,
@@ -131,16 +249,18 @@ class GoogleSheetSyncService {
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+          timeout: 12000,
+          maxRedirects: 10
         }
       );
 
+      const validated = validateWebhookResponse(response);
       syncConfig.lastSyncedAt = new Date().toISOString();
       syncConfig.totalSynced = (syncConfig.totalSynced || 0) + 1;
       persistConfig();
 
       logger.info(`[GoogleSheetSync] Record ${formatted.id} synced successfully to Google Sheet.`);
-      return { synced: true, response: response.data };
+      return { synced: true, response: validated };
     } catch (err) {
       logger.warn(`[GoogleSheetSync] Live sync failed for record ${formatted.id}: ${err.message}`);
       return { synced: false, error: err.message };
@@ -167,10 +287,12 @@ class GoogleSheetSyncService {
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 25000
+          timeout: 30000,
+          maxRedirects: 10
         }
       );
 
+      const validated = validateWebhookResponse(response);
       syncConfig.lastSyncedAt = new Date().toISOString();
       syncConfig.totalSynced = (syncConfig.totalSynced || 0) + formattedBatch.length;
       persistConfig();
@@ -178,7 +300,7 @@ class GoogleSheetSyncService {
       return {
         success: true,
         count: formattedBatch.length,
-        response: response.data
+        response: validated
       };
     } catch (err) {
       logger.error(`[GoogleSheetSync] Batch sync failed: ${err.message}`);
@@ -202,13 +324,16 @@ class GoogleSheetSyncService {
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 8000
+          timeout: 10000,
+          maxRedirects: 10
         }
       );
+
+      const validated = validateWebhookResponse(response);
       return {
         connected: true,
-        message: 'Successfully reached Google Sheet Apps Script Webhook!',
-        data: response.data
+        message: validated.message || 'Successfully reached Google Sheet Apps Script Webhook!',
+        data: validated
       };
     } catch (err) {
       throw new Error(`Connection test failed: ${err.message}`);

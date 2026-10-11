@@ -55,6 +55,215 @@ class AgentRuntime:
         self.llm = llm_provider
         self.memory = langchain_memory
 
+    def _resolve_attachment_context(
+        self,
+        file_id: Optional[str],
+        conversation_id: str,
+        attachment: Optional[Dict[str, Any]] = None,
+        user_prompt: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Resolves an attached file/image from MongoDB, ImageKit, or incoming payload.
+        Ensures extracted OCR text, table data, or Groq Vision visual understanding
+        is immediately available to the agent so visual and file queries are grounded.
+        """
+        doc = None
+        # 1. Lookup in MongoDB by file_id (or attachment id)
+        target_id = file_id or (attachment.get("id") or attachment.get("_id") or attachment.get("file_id") if isinstance(attachment, dict) else None)
+        try:
+            from bson import ObjectId
+            if target_id and mongo_memory.db is not None:
+                if ObjectId.is_valid(target_id):
+                    doc = mongo_memory.db.file_documents.find_one({"_id": ObjectId(target_id)})
+                if not doc:
+                    doc = mongo_memory.db.file_documents.find_one({"_id": str(target_id)})
+        except Exception as e:
+            logger.debug(f"[ReActExecutionLoop] MongoDB lookup by file_id warning: {e}")
+
+        # 2. Check if user prompt or attachment mentions a specific filename
+        if not doc and mongo_memory.db is not None:
+            try:
+                import re
+                att_name = (attachment.get("name") or attachment.get("filename") if isinstance(attachment, dict) else "")
+                recent_docs = list(mongo_memory.db.file_documents.find(
+                    {"isDeleted": {"$ne": True}},
+                    sort=[("_id", -1)]
+                ).limit(30))
+
+                for r_doc in recent_docs:
+                    r_name = (r_doc.get("filename") or r_doc.get("originalName") or "").strip()
+                    if not r_name:
+                        continue
+                    # Direct match with attachment name
+                    if att_name and (r_name.lower() == att_name.lower() or os.path.splitext(r_name)[0].lower() == os.path.splitext(att_name)[0].lower()):
+                        doc = r_doc
+                        break
+                    # Search within prompt
+                    if user_prompt and (r_name.lower() in user_prompt.lower() or os.path.splitext(r_name)[0].lower() in user_prompt.lower()):
+                        doc = r_doc
+                        break
+            except Exception as e:
+                logger.debug(f"[ReActExecutionLoop] Prompt filename matching warning: {e}")
+
+        # 3. Fallback to latest file attached in this conversation
+        if not doc and conversation_id and mongo_memory.db is not None:
+            try:
+                doc = mongo_memory.db.file_documents.find_one(
+                    {"conversationId": conversation_id, "isDeleted": {"$ne": True}},
+                    sort=[("_id", -1)]
+                )
+            except Exception as e:
+                logger.debug(f"[ReActExecutionLoop] MongoDB fallback lookup warning: {e}")
+
+        # 4. Fallback to latest file if prompt clearly inquires about an image or document
+        if not doc and mongo_memory.db is not None:
+            prompt_lower = (user_prompt or "").lower()
+            intent_keywords = [
+                "this image", "the image", "attached image", "this picture", "the picture",
+                "this photo", "the photo", "this file", "the file", "attached file",
+                "this document", "the document", "attached document", "this doc", "the doc",
+                "describe image", "analyze image", "inspect image", "read image",
+                "uploaded file", "uploaded image", "uploaded document"
+            ]
+            if any(kw in prompt_lower for kw in intent_keywords):
+                try:
+                    doc = mongo_memory.db.file_documents.find_one(
+                        {"isDeleted": {"$ne": True}},
+                        sort=[("_id", -1)]
+                    )
+                except Exception as e:
+                    logger.debug(f"[ReActExecutionLoop] Latest file fallback lookup warning: {e}")
+
+        # 5. If file document is found, check if processing is in-flight or completed
+        if doc:
+            status = doc.get("processingStatus", "pending")
+            # If in-flight, wait briefly for background indexing/vision to complete (up to 4s)
+            if status in ("pending", "processing") and mongo_memory.db is not None:
+                for _ in range(8):
+                    time.sleep(0.5)
+                    try:
+                        fresh = mongo_memory.db.file_documents.find_one({"_id": doc["_id"]})
+                        if fresh and fresh.get("processingStatus") == "completed":
+                            doc = fresh
+                            break
+                    except Exception:
+                        break
+
+            # If still incomplete or missing extracted content, trigger on-demand pipeline
+            mime = str(doc.get("mimeType", "")).lower()
+            ftype = str(doc.get("fileType", "")).lower()
+            extracted = doc.get("extractedContent") or {}
+            storage_url = doc.get("storageUrl") or ""
+            fname = doc.get("filename") or doc.get("originalName") or ""
+
+            if not extracted.get("summary") and not extracted.get("fullText"):
+                try:
+                    if ftype in ("jpg", "jpeg", "png", "webp") or "image" in mime:
+                        from file_processing.image_pipeline import image_pipeline
+                        norm = image_pipeline.process(
+                            image_url=storage_url,
+                            filename=fname,
+                            document_id=str(doc.get("_id", "")),
+                            user_prompt=user_prompt
+                        )
+                        if norm:
+                            va_desc = norm.visual_analyses[0].description if norm.visual_analyses else ""
+                            extracted = {
+                                "summary": norm.summary or va_desc,
+                                "textPreview": (norm.text or "")[:400],
+                                "fullText": norm.text or "",
+                                "tables": norm.tables or [],
+                                "structuredData": norm.structured_data or {},
+                                "hasVisualContent": True
+                            }
+                            if mongo_memory.db is not None:
+                                mongo_memory.db.file_documents.update_one(
+                                    {"_id": doc["_id"]},
+                                    {"$set": {"processingStatus": "completed", "extractedContent": extracted}}
+                                )
+                            doc["extractedContent"] = extracted
+                    elif ftype == "pdf" or "pdf" in mime:
+                        from file_processing.pdf_pipeline import pdf_pipeline
+                        norm = pdf_pipeline.process(
+                            file_url=storage_url,
+                            filename=fname,
+                            document_id=str(doc.get("_id", ""))
+                        )
+                        if norm and norm.text:
+                            extracted = {
+                                "summary": norm.summary or f"PDF document '{fname}' with {norm.page_count} pages.",
+                                "textPreview": (norm.text or "")[:400],
+                                "fullText": norm.text or "",
+                                "tables": norm.tables or [],
+                                "structuredData": norm.structured_data or {},
+                                "pageCount": norm.page_count,
+                                "hasVisualContent": norm.has_visual_content
+                            }
+                            if mongo_memory.db is not None:
+                                mongo_memory.db.file_documents.update_one(
+                                    {"_id": doc["_id"]},
+                                    {"$set": {"processingStatus": "completed", "extractedContent": extracted}}
+                                )
+                            doc["extractedContent"] = extracted
+                except Exception as ex_err:
+                    logger.warning(f"[ReActExecutionLoop] On-demand processing warning: {ex_err}")
+
+            filename = doc.get("filename") or doc.get("originalName") or "attached_file"
+            file_type = doc.get("fileType") or doc.get("mimeType") or "file"
+            storage_url = doc.get("storageUrl") or ""
+            extracted = doc.get("extractedContent") or {}
+            summary = extracted.get("summary") or ""
+            full_text = extracted.get("fullText") or extracted.get("textPreview") or ""
+            tables = extracted.get("tables") or []
+            structured = extracted.get("structuredData") or {}
+            key_info = structured.get("key_information") or []
+
+            lines = [
+                f"• Filename: {filename}",
+                f"• File Type: {file_type.upper()}",
+            ]
+            if storage_url:
+                lines.append(f"• Storage URL: {storage_url}")
+            if summary:
+                lines.append(f"• Visual Description & Content Summary:\n{summary}")
+            if key_info and isinstance(key_info, list):
+                lines.append("• Key Information & Detected Elements:")
+                for ki in key_info:
+                    lines.append(f"  - {ki}")
+            if full_text:
+                lines.append(f"• Visible Text / OCR Extracted Content:\n{full_text[:3000]}")
+            if tables and isinstance(tables, list):
+                lines.append(f"• Extracted Tables ({len(tables)} found):")
+                for tidx, tbl in enumerate(tables[:3]):
+                    lines.append(f"  [Table {tidx+1}]: {json.dumps(tbl, default=str)[:1000]}")
+
+            return {
+                "document_id": str(doc.get("_id", "")),
+                "filename": filename,
+                "file_type": file_type,
+                "storage_url": storage_url,
+                "summary": summary,
+                "full_text": full_text,
+                "context_text": "\n".join(lines)
+            }
+
+        # 4. If no MongoDB document found but frontend passed attachment dict
+        if attachment and isinstance(attachment, dict):
+            att_name = attachment.get("name") or attachment.get("filename") or "attached_file"
+            att_type = attachment.get("type") or "file"
+            att_url = attachment.get("url") or ""
+            return {
+                "document_id": str(attachment.get("id") or ""),
+                "filename": att_name,
+                "file_type": att_type,
+                "storage_url": att_url,
+                "summary": "",
+                "full_text": "",
+                "context_text": f"• Filename: {att_name}\n• File Type: {att_type}\n• Storage URL: {att_url}"
+            }
+
+        return None
+
     def run(
         self,
         prompt: str,
@@ -62,7 +271,8 @@ class AgentRuntime:
         conversation_id: str,
         agent_def: AgentDefinition,
         context_history: Optional[List[Dict[str, str]]] = None,
-        file_id: Optional[str] = None
+        file_id: Optional[str] = None,
+        attachment: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         start_time = time.time()
         raw_user_id = user_context.get("id") or user_context.get("userId") or user_context.get("user_id")
@@ -130,6 +340,13 @@ class AgentRuntime:
         # ---------------------------------------------------------------------
         # 3. BUILD SYSTEM PROMPT & GROUNDING INSTRUCTIONS
         # ---------------------------------------------------------------------
+        attachment_info = self._resolve_attachment_context(
+            file_id=file_id,
+            conversation_id=conversation_id,
+            attachment=attachment,
+            user_prompt=prompt
+        )
+
         system_content = (
             f"{agent_def.system_instructions}\n\n"
             f"AUTHENTICATED USER IDENTITY:\n"
@@ -148,6 +365,16 @@ class AgentRuntime:
             system_content += (
                 "\nRELEVANT LONG-TERM MEMORY (QDRANT; preferences/context only, never a source of current ERP facts):\n"
                 f"{ltm_facts_text}\n"
+            )
+
+        if attachment_info:
+            system_content += (
+                "\nAUTHENTIC ATTACHED FILE CONTEXT (Processed by Universal File Intelligence Pipeline):\n"
+                f"{attachment_info['context_text']}\n"
+                "\nFILE ATTACHMENT RULES:\n"
+                "1. The user has attached the above authentic file/image to this request.\n"
+                "2. When asked to describe, summarize, extract, or operate on this file, reference the description, OCR text, and tables above.\n"
+                "3. NEVER state that no file or image is attached; use the provided authentic content.\n"
             )
 
         system_content += (
@@ -177,8 +404,17 @@ class AgentRuntime:
             if c:
                 messages.append({"role": r, "content": c})
 
-        # Append current user prompt
-        messages.append({"role": "user", "content": prompt})
+        # Append current user prompt with attachment context if present
+        if attachment_info:
+            user_turn_prompt = (
+                f"{prompt}\n\n"
+                f"[Attached File Context: {attachment_info['filename']} ({attachment_info['file_type'].upper()})]\n"
+                f"{attachment_info['context_text']}"
+            )
+        else:
+            user_turn_prompt = prompt
+
+        messages.append({"role": "user", "content": user_turn_prompt})
         state.messages = messages
 
         # ---------------------------------------------------------------------
@@ -419,6 +655,15 @@ class AgentRuntime:
 
         logger.info(f"[ReActExecutionLoop] Completed in {duration_ms}ms | Actions: {actions_taken}")
 
+        citations = []
+        if attachment_info:
+            citations.append({
+                "source": attachment_info["filename"],
+                "type": "attachment",
+                "url": attachment_info.get("storage_url") or "",
+                "description": attachment_info.get("summary") or "Attached file context"
+            })
+
         return {
             "success": not state.errors and not requires_confirmation,
             "conversation_id": conversation_id,
@@ -433,6 +678,7 @@ class AgentRuntime:
             "confirmation_prompt": confirmation_prompt,
             "action_to_confirm": action_to_confirm,
             "generated_files": generated_files,
+            "citations": citations,
             "execution_duration_ms": duration_ms,
             "agent_state": {
                 "current_goal": state.current_goal,

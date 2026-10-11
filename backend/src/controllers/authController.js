@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { prisma } = require('../config/postgres');
+const { StudentPreData } = require('../models/mongo');
 const { getPermissionsForRole } = require('../config/permissions');
 const { logger } = require('../services/loggerService');
 const emailService = require('../services/emailService');
@@ -223,16 +224,16 @@ exports.registerStudent = async (req, res) => {
     if (existingUser) {
       return res.status(409).json({
         success: false,
-        message: `An account with email ${cleanEmail} already exists.`,
+        message: `An account with email ${cleanEmail} already exists. Please log in or reset your password.`,
         code: 'EMAIL_EXISTS'
       });
     }
 
     const existingStudent = await prisma.student.findUnique({ where: { enrollmentNo: cleanEnrollment } });
-    if (existingStudent) {
+    if (existingStudent && existingStudent.userId) {
       return res.status(409).json({
         success: false,
-        message: `A student with enrollment number ${cleanEnrollment} already exists.`,
+        message: `An account for enrollment number ${cleanEnrollment} already exists in the system.`,
         code: 'ENROLLMENT_EXISTS'
       });
     }
@@ -270,7 +271,7 @@ exports.registerStudent = async (req, res) => {
     const firstName = nameParts[0] || 'Student';
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    // Transactionally create User and Student in PostgreSQL (with generous 25s timeout for cloud DB)
+    // Transactionally create/link User and Student in PostgreSQL (with generous 25s timeout for cloud DB)
     const result = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
@@ -283,7 +284,7 @@ exports.registerStudent = async (req, res) => {
         }
       });
 
-      // Find Tutor Guardian specifically assigned to this section (Test S4 fix)
+      // Find Tutor Guardian specifically assigned to this section
       let targetTgId = null;
 
       if (sectionId) {
@@ -327,32 +328,75 @@ exports.registerStudent = async (req, res) => {
         if (activeTg) targetTgId = activeTg.id;
       }
 
-      const newStudent = await tx.student.create({
-        data: {
-          userId: newUser.id,
-          enrollmentNo: cleanEnrollment,
-          rollNo: rollNo ? rollNo.trim() : null,
-          firstName,
-          lastName,
-          email: cleanEmail,
-          phone: phone || null,
-          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-          admissionYear: parseInt(admissionYear, 10) || 2023,
-          semester: parseInt(semester, 10) || 5,
-          departmentId: department.id,
-          sectionId,
-          tgTeacherId: targetTgId || null,
-          status: 'ACTIVE'
-        },
-        include: {
-          section: true,
-          department: true,
-          tutorGuardian: true
-        }
-      });
+      let studentRecord;
+      if (existingStudent) {
+        // Link and activate pre-loaded student row from Master Data roster
+        studentRecord = await tx.student.update({
+          where: { id: existingStudent.id },
+          data: {
+            userId: newUser.id,
+            firstName,
+            lastName,
+            email: cleanEmail,
+            phone: phone || existingStudent.phone || null,
+            semester: parseInt(semester, 10) || existingStudent.semester || 5,
+            departmentId: department.id,
+            sectionId: sectionId || existingStudent.sectionId,
+            tgTeacherId: targetTgId || existingStudent.tgTeacherId,
+            status: 'ACTIVE'
+          },
+          include: {
+            section: true,
+            department: true,
+            tutorGuardian: true
+          }
+        });
+      } else {
+        studentRecord = await tx.student.create({
+          data: {
+            userId: newUser.id,
+            enrollmentNo: cleanEnrollment,
+            rollNo: rollNo ? rollNo.trim() : null,
+            firstName,
+            lastName,
+            email: cleanEmail,
+            phone: phone || null,
+            dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+            admissionYear: parseInt(admissionYear, 10) || 2023,
+            semester: parseInt(semester, 10) || 5,
+            departmentId: department.id,
+            sectionId,
+            tgTeacherId: targetTgId || null,
+            status: 'ACTIVE'
+          },
+          include: {
+            section: true,
+            department: true,
+            tutorGuardian: true
+          }
+        });
+      }
 
-      return { user: newUser, student: newStudent };
+      return { user: newUser, student: studentRecord };
     }, { timeout: 25000, maxWait: 15000 });
+
+    // Mark student registered in MongoDB StudentPreData roster
+    try {
+      await StudentPreData.updateOne(
+        { enrollment: cleanEnrollment },
+        {
+          $set: {
+            isRegistered: true,
+            registeredAt: new Date(),
+            registeredUserId: String(result.user.id),
+            email: cleanEmail,
+            phone: phone || null
+          }
+        }
+      );
+    } catch (mErr) {
+      logger.warn(`[Student PreData Update Warning]: ${mErr.message}`);
+    }
 
     const token = signToken(result.user, 'STUDENT');
     const safeUser = buildSafeUser({
@@ -362,7 +406,7 @@ exports.registerStudent = async (req, res) => {
       studentProfile: result.student
     }, 'STUDENT');
 
-    logger.info(`[Auth Register] Student registered: ${cleanEmail} (${cleanEnrollment})`);
+    logger.info(`[Auth Register] Student registered successfully: ${cleanEmail} (${cleanEnrollment})`);
 
     return res.status(201).json({
       success: true,
@@ -620,9 +664,16 @@ exports.register = async (req, res) => {
     return exports.registerAdmin(req, res);
   }
   if (role === 'TEACHER' || role === 'FACULTY' || role === 'TG' || req.body.employeeId) {
-    return exports.registerTeacher(req, res);
+    return res.status(403).json({
+      success: false,
+      code: 'FACULTY_SELF_REGISTRATION_DISABLED',
+      message: 'Faculty self-registration is disabled. Faculty accounts are appointed and provisioned exclusively by Department Administration via Master Data.'
+    });
   }
-  return exports.registerStudent(req, res);
+  
+  // Protect student registration with MongoDB StudentPreData verification
+  const verifyStudentPreData = require('../middleware/verifyStudentPreData');
+  return verifyStudentPreData(req, res, () => exports.registerStudent(req, res));
 };
 
 // ----------------------------------------------------------------------------

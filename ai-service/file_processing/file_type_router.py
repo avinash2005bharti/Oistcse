@@ -18,8 +18,8 @@ from file_processing.text_pipeline import text_pipeline
 from file_processing.chunker import intelligent_chunker
 from rag.qdrant_manager import qdrant_manager
 
-NODE_BACKEND_URL = os.getenv("BACKEND_URL") or os.getenv("NODE_BACKEND_URL") or (
-    "https://oistcse-server.onrender.com" if (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production") else "http://localhost:5000"
+NODE_BACKEND_URL = "http://localhost:5000" if not os.getenv("RENDER") else (
+    os.getenv("NODE_BACKEND_URL") or os.getenv("BACKEND_URL") or "https://oistcse-server.onrender.com"
 )
 
 
@@ -242,7 +242,7 @@ class FileTypeRouter:
                                 "file_type": detected_type,
                                 "user_id": user_id,
                                 "department_id": department_id,
-                                "department": department_code,
+                                "department": department_code or "CSE",
                                 "visibility": chunk.get("visibility", "private"),
                                 "page": chunk.get("page"),
                                 "slide": chunk.get("slide") or chunk.get("slide_number"),

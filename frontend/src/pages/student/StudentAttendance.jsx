@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useERP } from '../../context/ERPContext';
 import AttendanceProgress from '../../components/AttendanceProgress';
 import { attendanceApi } from '../../api/attendanceApi';
@@ -37,8 +38,8 @@ export default function StudentAttendance() {
   // Consideration Form
   const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(() => new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
-  const [title, setTitle] = useState('Official Duty / Event Representation');
-  const [reason, setReason] = useState('Smart India Hackathon Finalist representation.');
+  const [title, setTitle] = useState('');
+  const [reason, setReason] = useState('');
   const [submittingConsideration, setSubmittingConsideration] = useState(false);
 
   // Query Form
@@ -301,9 +302,44 @@ export default function StudentAttendance() {
       </div>
 
       {/* Consideration (Duty) Modal */}
-      {considerationModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-xl)', padding: '2rem', width: '100%', maxWidth: '520px', boxShadow: 'var(--shadow-xl)', border: '1px solid var(--border-subtle)' }}>
+      {considerationModalOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '1rem',
+            overflowY: 'auto',
+            boxSizing: 'border-box'
+          }}
+          onClick={() => setConsiderationModalOpen(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--surface)',
+              borderRadius: 'var(--radius-xl)',
+              padding: '1.75rem',
+              width: '94%',
+              maxWidth: '520px',
+              maxHeight: 'calc(100vh - 2.5rem)',
+              overflowY: 'auto',
+              boxShadow: 'var(--shadow-xl)',
+              border: '1px solid var(--border-subtle)',
+              margin: 'auto',
+              boxSizing: 'border-box'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Sparkles size={20} style={{ color: 'var(--primary)' }} />
@@ -325,7 +361,7 @@ export default function StudentAttendance() {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className="input-field"
-                  placeholder="e.g. Smart India Hackathon Finalist"
+                  placeholder="e.g. Technical Workshop / Hackathon Participation"
                 />
               </div>
 
@@ -384,13 +420,49 @@ export default function StudentAttendance() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Query Dispute Modal */}
-      {queryModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
-          <div style={{ backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-xl)', padding: '2rem', width: '100%', maxWidth: '460px', boxShadow: 'var(--shadow-xl)', border: '1px solid var(--border-subtle)' }}>
+      {queryModalOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '1rem',
+            overflowY: 'auto',
+            boxSizing: 'border-box'
+          }}
+          onClick={() => setQueryModalOpen(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--surface)',
+              borderRadius: 'var(--radius-xl)',
+              padding: '1.75rem',
+              width: '94%',
+              maxWidth: '460px',
+              maxHeight: 'calc(100vh - 2.5rem)',
+              overflowY: 'auto',
+              boxShadow: 'var(--shadow-xl)',
+              border: '1px solid var(--border-subtle)',
+              margin: 'auto',
+              boxSizing: 'border-box'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <HelpCircle size={20} style={{ color: 'var(--danger)' }} />
@@ -440,7 +512,8 @@ export default function StudentAttendance() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -6,6 +6,7 @@
 const xlsx = require('xlsx');
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../config/postgres');
+const { StudentPreData } = require('../models/mongo');
 const { logger } = require('../services/loggerService');
 
 // Helper to parse file buffer (XLSX or CSV) into JSON array
@@ -254,6 +255,7 @@ exports.importStudents = async (req, res) => {
       const name = (row['Name'] || row['name'] || row['Full Name'] || row['Student Name'] || '').trim();
       const email = (row['Email'] || row['email'] || '').trim().toLowerCase();
       const enrollmentNo = (row['Enrollment No'] || row['EnrollmentNo'] || row['enrollmentNo'] || row['Roll No'] || row['rollNo'] || '').trim().toUpperCase();
+      const batch = (row['Batch'] || row['batch'] || row['Academic Batch'] || '2022-2026').trim();
       const semester = parseInt(row['Semester'] || row['semester'] || 5, 10);
       const sectionName = (row['Section'] || row['section'] || 'A').trim().toUpperCase();
       const phone = (row['Phone'] || row['phone'] || '').trim();
@@ -305,7 +307,9 @@ exports.importStudents = async (req, res) => {
         lastName,
         email,
         enrollmentNo,
+        batch,
         semester,
+        sectionName,
         sectionId: secMatch?.id || sections[0]?.id || null,
         phone: phone || null,
         departmentId: defaultDept?.id
@@ -355,6 +359,31 @@ exports.importStudents = async (req, res) => {
         createdStudents.push(student);
       }
     });
+
+    // Populate and sync pre-data into MongoDB StudentPreData for registration verification
+    for (const item of validRows) {
+      try {
+        await StudentPreData.findOneAndUpdate(
+          { enrollment: item.enrollmentNo },
+          {
+            $set: {
+              fullName: item.name,
+              enrollment: item.enrollmentNo,
+              batch: item.batch || '2022-2026',
+              email: item.email,
+              semester: item.semester,
+              section: item.sectionName || 'A',
+              department: 'CSE',
+              phone: item.phone,
+              source: 'MASTER_DATA'
+            }
+          },
+          { upsert: true, new: true }
+        );
+      } catch (mErr) {
+        logger.warn(`[Master Data Mongo Sync] Error: ${mErr.message}`);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -886,3 +915,289 @@ exports.importTimetable = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ----------------------------------------------------------------------------
+// 6. TIMETABLE EXPORT
+// ----------------------------------------------------------------------------
+exports.exportTimetable = async (req, res) => {
+  try {
+    const slots = await prisma.timetableSlot.findMany({
+      include: {
+        subject: true,
+        teacher: true,
+        classroom: true,
+        section: true
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { periodNumber: 'asc' }]
+    });
+
+    const data = slots.map(s => ({
+      'Day': s.dayOfWeek,
+      'Period': s.periodNumber,
+      'Start Time': s.startTime,
+      'End Time': s.endTime,
+      'Subject': s.subject ? `${s.subject.code} - ${s.subject.name}` : '',
+      'Teacher': s.teacher ? `${s.teacher.firstName} ${s.teacher.lastName || ''}`.trim() : '',
+      'Room': s.classroom ? s.classroom.roomNumber : '',
+      'Section': s.section ? s.section.name : 'A',
+      'Type': s.isLab ? 'Lab' : 'Theory'
+    }));
+
+    const worksheet = xlsx.utils.json_to_sheet(data.length > 0 ? data : [
+      {
+        'Day': 'Monday',
+        'Period': 1,
+        'Start Time': '09:30 AM',
+        'End Time': '10:20 AM',
+        'Subject': 'CS501',
+        'Teacher': 'Dr. Rajesh Sharma',
+        'Room': 'CR-301',
+        'Section': 'A',
+        'Type': 'Theory'
+      }
+    ]);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Timetable_Schedule');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=timetable_master_data.xlsx');
+    return res.send(buffer);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ----------------------------------------------------------------------------
+// 7. SAMPLE DATA TEMPLATE DOWNLOAD (.xlsx & .csv) FOR ALL MASTER DATA TYPES
+// ----------------------------------------------------------------------------
+exports.getSampleTemplate = async (req, res) => {
+  try {
+    const { type } = req.params;
+    const format = (req.query.format || 'xlsx').toLowerCase();
+
+    const sampleDatasets = {
+      teachers: {
+        sheetName: 'Teachers_Sample',
+        filename: 'teachers_import_sample_template',
+        data: [
+          {
+            'Employee ID': 'EMP1001',
+            'Name': 'Dr. Rajesh Sharma',
+            'Email': 'rajesh.sharma@oist.edu.in',
+            'Designation': 'Professor',
+            'Phone': '9876543210',
+            'Is TG': 'Yes'
+          },
+          {
+            'Employee ID': 'EMP1002',
+            'Name': 'Prof. Sunita Verma',
+            'Email': 'sunita.verma@oist.edu.in',
+            'Designation': 'Associate Professor',
+            'Phone': '9876543211',
+            'Is TG': 'No'
+          },
+          {
+            'Employee ID': 'EMP1003',
+            'Name': 'Er. Amit Patel',
+            'Email': 'amit.patel@oist.edu.in',
+            'Designation': 'Assistant Professor',
+            'Phone': '9876543212',
+            'Is TG': 'Yes'
+          },
+          {
+            'Employee ID': 'EMP1004',
+            'Name': 'Dr. Priya Nair',
+            'Email': 'priya.nair@oist.edu.in',
+            'Designation': 'Assistant Professor',
+            'Phone': '9876543213',
+            'Is TG': 'No'
+          }
+        ]
+      },
+      students: {
+        sheetName: 'Students_Sample',
+        filename: 'students_import_sample_template',
+        data: [
+          {
+            'Enrollment No': '0111CS211001',
+            'Name': 'Aarav Sharma',
+            'Email': 'aarav.sharma@student.oist.edu.in',
+            'Semester': 5,
+            'Section': 'A',
+            'Phone': '9123456780'
+          },
+          {
+            'Enrollment No': '0111CS211002',
+            'Name': 'Diya Patel',
+            'Email': 'diya.patel@student.oist.edu.in',
+            'Semester': 5,
+            'Section': 'A',
+            'Phone': '9123456781'
+          },
+          {
+            'Enrollment No': '0111CS211003',
+            'Name': 'Rohan Gupta',
+            'Email': 'rohan.gupta@student.oist.edu.in',
+            'Semester': 5,
+            'Section': 'B',
+            'Phone': '9123456782'
+          },
+          {
+            'Enrollment No': '0111CS211004',
+            'Name': 'Ananya Singh',
+            'Email': 'ananya.singh@student.oist.edu.in',
+            'Semester': 6,
+            'Section': 'A',
+            'Phone': '9123456783'
+          }
+        ]
+      },
+      subjects: {
+        sheetName: 'Subjects_Sample',
+        filename: 'subjects_import_sample_template',
+        data: [
+          {
+            'Code': 'CS501',
+            'Name': 'Theory of Computation',
+            'Semester': 5,
+            'Credits': 4,
+            'Weekly Hours': 4,
+            'Is Elective': 'No'
+          },
+          {
+            'Code': 'CS502',
+            'Name': 'Database Management Systems',
+            'Semester': 5,
+            'Credits': 4,
+            'Weekly Hours': 4,
+            'Is Elective': 'No'
+          },
+          {
+            'Code': 'CS503',
+            'Name': 'Computer Networks',
+            'Semester': 5,
+            'Credits': 4,
+            'Weekly Hours': 4,
+            'Is Elective': 'No'
+          },
+          {
+            'Code': 'CS504',
+            'Name': 'Artificial Intelligence',
+            'Semester': 5,
+            'Credits': 3,
+            'Weekly Hours': 3,
+            'Is Elective': 'Yes'
+          }
+        ]
+      },
+      classrooms: {
+        sheetName: 'Classrooms_Sample',
+        filename: 'classrooms_import_sample_template',
+        data: [
+          {
+            'Room Number': 'CR-301',
+            'Type': 'LECTURE_HALL',
+            'Capacity': 60,
+            'Building': 'CSE Block',
+            'Floor': 3
+          },
+          {
+            'Room Number': 'CR-302',
+            'Type': 'LECTURE_HALL',
+            'Capacity': 60,
+            'Building': 'CSE Block',
+            'Floor': 3
+          },
+          {
+            'Room Number': 'LAB-101',
+            'Type': 'LAB',
+            'Capacity': 40,
+            'Building': 'CSE Block',
+            'Floor': 1
+          },
+          {
+            'Room Number': 'SEM-01',
+            'Type': 'SEMINAR_HALL',
+            'Capacity': 120,
+            'Building': 'CSE Block',
+            'Floor': 2
+          }
+        ]
+      },
+      timetables: {
+        sheetName: 'Timetable_Sample',
+        filename: 'timetable_import_sample_template',
+        data: [
+          {
+            'Day': 'Monday',
+            'Period': 1,
+            'Start Time': '09:30 AM',
+            'End Time': '10:20 AM',
+            'Subject': 'CS501',
+            'Teacher': 'Dr. Rajesh Sharma',
+            'Room': 'CR-301',
+            'Type': 'Theory'
+          },
+          {
+            'Day': 'Monday',
+            'Period': 2,
+            'Start Time': '10:20 AM',
+            'End Time': '11:10 AM',
+            'Subject': 'CS502',
+            'Teacher': 'Prof. Sunita Verma',
+            'Room': 'CR-301',
+            'Type': 'Theory'
+          },
+          {
+            'Day': 'Tuesday',
+            'Period': 1,
+            'Start Time': '09:30 AM',
+            'End Time': '10:20 AM',
+            'Subject': 'CS503',
+            'Teacher': 'Er. Amit Patel',
+            'Room': 'CR-301',
+            'Type': 'Theory'
+          },
+          {
+            'Day': 'Wednesday',
+            'Period': 3,
+            'Start Time': '11:20 AM',
+            'End Time': '01:00 PM',
+            'Subject': 'CS502',
+            'Teacher': 'Prof. Sunita Verma',
+            'Room': 'LAB-101',
+            'Type': 'Lab'
+          }
+        ]
+      }
+    };
+
+    const normalizedType = type === 'timetable' ? 'timetables' : type;
+    const dataset = sampleDatasets[normalizedType];
+
+    if (!dataset) {
+      return res.status(404).json({ success: false, message: `Sample template for '${type}' not found.` });
+    }
+
+    const worksheet = xlsx.utils.json_to_sheet(dataset.data);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, dataset.sheetName);
+
+    if (format === 'csv') {
+      const csvBuffer = xlsx.write(workbook, { type: 'buffer', bookType: 'csv' });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename=${dataset.filename}.csv`);
+      return res.send(csvBuffer);
+    } else {
+      const xlsxBuffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=${dataset.filename}.xlsx`);
+      return res.send(xlsxBuffer);
+    }
+  } catch (error) {
+    logger.error(`[Master Data] Get Sample Template error: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+

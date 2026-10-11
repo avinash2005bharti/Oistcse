@@ -67,7 +67,7 @@ ROLE_AGENT_DEFINITIONS: Dict[str, AgentDefinition] = {
             "submit_attendance_query", "get_student", "get_subjects",
             "get_rooms", "check_room_availability", "get_teachers",
             "get_teacher", "get_teacher_availability", "get_teachers_on_leave",
-            "export_timetable_excel", "export_timetable_pdf"
+            "export_timetable_excel", "export_timetable_pdf", "inspect_attached_file"
         ]
     ),
 
@@ -91,7 +91,8 @@ ROLE_AGENT_DEFINITIONS: Dict[str, AgentDefinition] = {
             "get_students", "get_student", "apply_leave", "mark_teacher_leave",
             "get_teacher_workload", "get_teacher_availability", "get_teachers_on_leave",
             "get_timetable", "get_subjects", "get_rooms", "check_room_availability",
-            "export_timetable_excel", "export_timetable_pdf", "get_teachers", "get_teacher"
+            "export_timetable_excel", "export_timetable_pdf", "get_teachers", "get_teacher",
+            "inspect_attached_file"
         ]
     ),
 
@@ -114,7 +115,8 @@ ROLE_AGENT_DEFINITIONS: Dict[str, AgentDefinition] = {
             "get_student", "get_student_attendance", "get_students", "apply_leave",
             "get_teacher_schedule", "get_teacher_workload", "get_teachers_on_leave",
             "get_timetable", "get_subjects", "get_rooms", "check_room_availability",
-            "export_timetable_excel", "export_timetable_pdf", "get_teachers", "get_teacher"
+            "export_timetable_excel", "export_timetable_pdf", "get_teachers", "get_teacher",
+            "inspect_attached_file"
         ]
     ),
 
@@ -144,7 +146,7 @@ ROLE_AGENT_DEFINITIONS: Dict[str, AgentDefinition] = {
             "get_student_attendance", "create_subject", "delete_subject", "get_subjects",
             "create_classroom", "get_rooms", "check_room_availability",
             "generate_workload_report", "generate_attendance_report",
-            "export_timetable_excel", "export_timetable_pdf"
+            "export_timetable_excel", "export_timetable_pdf", "inspect_attached_file"
         ]
     ),
 
